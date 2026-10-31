@@ -1,6 +1,7 @@
 /**
- * VoxPDF Studio - Frontend Controller (Arquitectura Híbrida Python FastAPI + GitHub Pages Live Mode)
- * Desarrollado por Edgar López — Portafolio de Ingeniería Mecatrónica & Desarrollo de Software.
+ * VoxPDF Studio - Frontend Controller (Stitch Kinetic Precision Design System)
+ * Arquitectura Híbrida: Python FastAPI + PyMuPDF + Edge-TTS / Modo Web Live PDF.js
+ * Desarrollado por Edgar López.
  */
 
 if (window.pdfjsLib) {
@@ -9,26 +10,28 @@ if (window.pdfjsLib) {
 }
 
 const state = {
-  backendAvailable: true,   // Detectado automáticamente al iniciar (/api/health)
-  docData: null,            // Respuesta estructurada del documento
-  rawFile: null,            // Archivo File original subido por el usuario
-  pdfJsDoc: null,           // Instancia de PDF.js para renderizar páginas
-  currentPage: 1,           // Página actual (1-based)
-  currentSentenceIdx: 0,    // Índice de oración en la página actual (0-based)
-  isPlaying: false,         // Estado de reproducción
+  backendAvailable: true,
+  docData: null,
+  rawFile: null,
+  pdfJsDoc: null,
+  currentPage: 1,
+  currentSentenceIdx: 0,
+  isPlaying: false,
   selectedVoice: "es-MX-DaliaNeural",
   playbackSpeed: 1.0,
-  audioBlobCache: new Map(), // Caché en memoria de Blobs de audio pre-cargados
-  playSessionId: 0,         // Token para cancelar reproducciones anteriores al saltar
+  audioBlobCache: new Map(),
+  playSessionId: 0,
 };
 
-// Referencias DOM
 const dom = {
   pdfFileInput: document.getElementById("pdfFileInput"),
   engineBadge: document.getElementById("engineBadge"),
   engineBadgeText: document.getElementById("engineBadgeText"),
+  headerScreenSubtitle: document.getElementById("headerScreenSubtitle"),
   emptyStateDropzone: document.getElementById("emptyStateDropzone"),
   readerSplitContainer: document.getElementById("readerSplitContainer"),
+  screenReaderAudio: document.getElementById("screenReaderAudio"),
+  screenChaptersCleaning: document.getElementById("screenChaptersCleaning"),
 
   // Resumen y limpieza
   docTitleText: document.getElementById("docTitleText"),
@@ -43,7 +46,8 @@ const dom = {
   countHeadersRemoved: document.getElementById("countHeadersRemoved"),
   countPageNumsRemoved: document.getElementById("countPageNumsRemoved"),
 
-  // Navegación lateral
+  // Navegación Capítulos y Páginas
+  chapterCountLabel: document.getElementById("chapterCountLabel"),
   chapterList: document.getElementById("chapterList"),
   pageGrid: document.getElementById("pageGrid"),
   btnPrevPageTop: document.getElementById("btnPrevPageTop"),
@@ -51,19 +55,24 @@ const dom = {
   currentPageLabel: document.getElementById("currentPageLabel"),
   totalPagesLabel: document.getElementById("totalPagesLabel"),
   bookProgressPct: document.getElementById("bookProgressPct"),
+  bookProgressBarFill: document.getElementById("bookProgressBarFill"),
 
-  // Visor PDF y Guion
+  // Visor PDF y DAW Focus Card
+  pdfHeaderDocName: document.getElementById("pdfHeaderDocName"),
+  activeParaBadge: document.getElementById("activeParaBadge"),
+  activeParaPreviewText: document.getElementById("activeParaPreviewText"),
   pdfCanvas: document.getElementById("pdfCanvas"),
   pdfHighlightBox: document.getElementById("pdfHighlightBox"),
   sentencesContainer: document.getElementById("sentencesContainer"),
 
-  // Reproductor inferior
+  // Reproductor flotante Stitch
   btnPrevSentence: document.getElementById("btnPrevSentence"),
   btnPlayPause: document.getElementById("btnPlayPause"),
   btnNextSentence: document.getElementById("btnNextSentence"),
   iconPlay: document.getElementById("iconPlay"),
   iconPause: document.getElementById("iconPause"),
   audioVisualizer: document.getElementById("audioVisualizer"),
+  playerChapterLabel: document.getElementById("playerChapterLabel"),
   nowPlayingSentence: document.getElementById("nowPlayingSentence"),
   sentenceCounterLabel: document.getElementById("sentenceCounterLabel"),
   pageProgressFill: document.getElementById("pageProgressFill"),
@@ -71,7 +80,7 @@ const dom = {
   speedSelect: document.getElementById("speedSelect"),
   neuralAudioPlayer: document.getElementById("neuralAudioPlayer"),
 
-  // Banner de progreso guardado
+  // Banner progreso guardado
   resumeBanner: document.getElementById("resumeBanner"),
   resumeBannerText: document.getElementById("resumeBannerText"),
   btnResumeConfirm: document.getElementById("btnResumeConfirm"),
@@ -109,24 +118,25 @@ async function detectEnvironmentAndVoices() {
     const data = await voicesRes.json();
 
     state.backendAvailable = true;
-    dom.engineBadgeText.textContent = "Motor Python Neuronal Activo";
+    dom.engineBadgeText.textContent = "Python Neural";
     dom.voiceSelect.innerHTML = "";
     (data.voices || []).forEach((v) => {
       const opt = document.createElement("option");
       opt.value = v.id;
-      opt.textContent = `${v.name} · ${v.badge}`;
+      opt.className = "bg-surface-container text-primary";
+      opt.textContent = `${v.name}`;
       dom.voiceSelect.appendChild(opt);
     });
 
     const browserOpt = document.createElement("option");
     browserOpt.value = "browser-local";
-    browserOpt.textContent = "Voz del Sistema (Offline / Navegador)";
+    browserOpt.className = "bg-surface-container text-primary";
+    browserOpt.textContent = "Voz del Sistema (Offline)";
     dom.voiceSelect.appendChild(browserOpt);
   } catch (_) {
-    // Modo Web en Vivo (GitHub Pages sin servidor Python activo)
     state.backendAvailable = false;
     state.selectedVoice = "browser-local";
-    dom.engineBadgeText.textContent = "Modo Web Live (PDF.js + Web Speech)";
+    dom.engineBadgeText.textContent = "Web Live Engine";
     populateBrowserSpeechVoices();
     if (window.speechSynthesis) {
       window.speechSynthesis.onvoiceschanged = populateBrowserSpeechVoices;
@@ -144,7 +154,8 @@ function populateBrowserSpeechVoices() {
   if (list.length === 0) {
     const opt = document.createElement("option");
     opt.value = "browser-local";
-    opt.textContent = "Voz del Navegador (Español / Inglés)";
+    opt.className = "bg-surface-container text-primary";
+    opt.textContent = "Voz del Navegador (ES/EN)";
     dom.voiceSelect.appendChild(opt);
     return;
   }
@@ -152,6 +163,7 @@ function populateBrowserSpeechVoices() {
   list.forEach((v) => {
     const opt = document.createElement("option");
     opt.value = `browser:${v.name}`;
+    opt.className = "bg-surface-container text-primary";
     opt.textContent = `${v.name} (${v.lang})`;
     dom.voiceSelect.appendChild(opt);
   });
@@ -188,20 +200,32 @@ function setupEventListeners() {
     });
   });
 
+  // Segmented Tabs: Chapters (TOC) vs Page Grid
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
-      btn.classList.add("active");
-      const target = btn.dataset.tab === "chapters" ? "tabChapters" : "tabPages";
-      document.getElementById(target).classList.add("active");
+      document.querySelectorAll(".tab-btn").forEach((b) => {
+        b.className =
+          "tab-btn py-2.5 rounded-lg text-on-surface-variant font-label-md text-label-md font-medium flex items-center justify-center gap-2 hover:text-on-surface transition-all";
+      });
+      btn.className =
+        "tab-btn active py-2.5 rounded-lg bg-surface-container-high text-primary-container font-label-md text-label-md font-semibold shadow-[0_0_12px_rgba(0,240,255,0.2)] flex items-center justify-center gap-2 transition-all";
+
+      const showChapters = btn.dataset.tab === "chapters";
+      document.getElementById("tabChapters").classList.toggle("hidden", !showChapters);
+      document.getElementById("tabPages").classList.toggle("hidden", showChapters);
     });
   });
 
+  // Segmented View Mode Switcher (Split / Script / PDF)
   document.querySelectorAll(".view-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".view-mode-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
+      document.querySelectorAll(".view-mode-btn").forEach((b) => {
+        b.className =
+          "view-mode-btn py-1.5 px-2 rounded font-label-sm text-label-sm text-center font-medium text-on-surface-variant hover:text-primary transition-all";
+      });
+      btn.className =
+        "view-mode-btn active py-1.5 px-2 rounded font-label-sm text-label-sm text-center font-medium bg-primary-container text-on-primary shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-all";
+
       dom.readerSplitContainer.classList.remove("view-split", "view-script", "view-pdf");
       dom.readerSplitContainer.classList.add(`view-${btn.dataset.view}`);
       renderPdfPageCanvas(state.currentPage);
@@ -225,6 +249,7 @@ function setupEventListeners() {
   dom.speedSelect.addEventListener("change", () => {
     state.playbackSpeed = parseFloat(dom.speedSelect.value) || 1.0;
     state.audioBlobCache.clear();
+    highlightActiveSentence();
     saveReadingProgress();
     if (state.isPlaying) playCurrentSentence();
   });
@@ -260,7 +285,6 @@ function setupEventListeners() {
   });
   dom.btnConfirmExport.addEventListener("click", handleExportMp3);
 
-  // Botón de desbloqueo de Pase Neuronal / MP3 mediante Anuncio Recompensado
   const btnWatchAdUnlock = document.getElementById("btnWatchAdUnlock");
   if (btnWatchAdUnlock && window.VoxAdManager) {
     btnWatchAdUnlock.addEventListener("click", () => {
@@ -268,17 +292,42 @@ function setupEventListeners() {
     });
   }
 
-  // Navegación inferior móvil (App Android / Pantallas táctiles)
-  const workspaceEl = document.querySelector(".workspace");
+  // Stitch Mobile Bottom Navigation Switching (< 1024px)
   document.querySelectorAll(".mobile-nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".mobile-nav-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      if (workspaceEl) {
-        workspaceEl.classList.toggle("mobile-show-sidebar", btn.dataset.mobilePanel === "sidebar");
-      }
+      switchMobileScreen(btn.dataset.mobilePanel);
     });
   });
+}
+
+function switchMobileScreen(panelName) {
+  const showSidebar = panelName === "sidebar";
+  document.querySelectorAll(".mobile-nav-btn").forEach((b) => {
+    const isActive = b.dataset.mobilePanel === panelName;
+    b.className = isActive
+      ? "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-space-md text-primary-container font-semibold transition-colors active:scale-95"
+      : "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-space-md text-on-surface-variant transition-colors active:scale-95";
+  });
+
+  if (dom.headerScreenSubtitle) {
+    dom.headerScreenSubtitle.textContent = showSidebar
+      ? "Chapters & Cleaning · Kinetic Precision"
+      : "Reader & Audio · Kinetic Precision";
+  }
+
+  if (showSidebar) {
+    dom.screenChaptersCleaning.classList.remove("hidden");
+    dom.screenChaptersCleaning.classList.add("flex");
+    dom.screenReaderAudio.classList.add("hidden");
+    dom.screenReaderAudio.classList.remove("flex");
+    dom.screenReaderAudio.classList.add("lg:flex");
+  } else {
+    dom.screenChaptersCleaning.classList.add("hidden");
+    dom.screenChaptersCleaning.classList.remove("flex");
+    dom.screenChaptersCleaning.classList.add("lg:flex");
+    dom.screenReaderAudio.classList.remove("hidden");
+    dom.screenReaderAudio.classList.add("flex");
+  }
 }
 
 async function handleUploadFile(file, keepPosition = false) {
@@ -286,7 +335,7 @@ async function handleUploadFile(file, keepPosition = false) {
   state.rawFile = file;
   state.audioBlobCache.clear();
 
-  dom.nowPlayingSentence.textContent = "Analizando PDF y aplicando limpieza inteligente...";
+  dom.nowPlayingSentence.textContent = "Analizando PDF y aplicando limpieza inteligente BBox...";
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -323,9 +372,6 @@ async function handleUploadFile(file, keepPosition = false) {
   }
 }
 
-/**
- * Procesador de respaldo en el navegador (PDF.js) cuando se ejecuta en GitHub Pages sin servidor Python.
- */
 async function parsePdfClientSide(arrayBuffer, filename, options) {
   const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
   const pdf = await loadingTask.promise;
@@ -335,7 +381,7 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
   let totalSentences = 0;
   let totalWords = 0;
   const pages = [];
-  const chapters = [{ id: "ch_1", level: 1, title: "Inicio del documento", page_number: 1 }];
+  const chapters = [{ id: "ch_1", level: 1, title: "1. Inicio del Documento", page_number: 1 }];
   const pageNumRegex = /^\s*(?:p[áa]gina|p[áa]g\.?|page)?\s*\d+\s*(?:(?:de|of|\/|-)\s*\d+)?\s*$/i;
 
   for (let p = 1; p <= totalPages; p++) {
@@ -423,12 +469,15 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
   dom.emptyStateDropzone.classList.add("hidden");
   dom.readerSplitContainer.classList.remove("hidden");
 
+  const sizeMb = state.rawFile ? `${(state.rawFile.size / (1024 * 1024)).toFixed(1)} MB` : "PDF Master";
   dom.docTitleText.textContent = parsed.title;
-  dom.docMetaText.textContent = `${parsed.filename} · ${parsed.author}`;
-  dom.docDurationBadge.textContent = `~${parsed.estimated_duration_minutes} min`;
+  dom.docTitleText.title = parsed.title;
+  dom.docMetaText.textContent = sizeMb;
+  dom.pdfHeaderDocName.textContent = `Doc: ${parsed.filename}`;
+  dom.docDurationBadge.textContent = `~${parsed.estimated_duration_minutes} min listen`;
   dom.statPages.textContent = parsed.total_pages;
-  dom.statSentences.textContent = parsed.total_sentences;
-  dom.statWords.textContent = parsed.total_words;
+  dom.statSentences.textContent = parsed.total_sentences.toLocaleString();
+  dom.statWords.textContent = parsed.total_words.toLocaleString();
   dom.totalPagesLabel.textContent = parsed.total_pages;
 
   dom.countHeadersRemoved.textContent = parsed.cleaning_stats?.removed_headers_footers ?? 0;
@@ -451,18 +500,57 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
 }
 
 function renderChaptersAndPages() {
-  const { chapters, total_pages } = state.docData;
+  const { chapters, total_pages, pages } = state.docData;
+
+  if (dom.chapterCountLabel) {
+    dom.chapterCountLabel.textContent = `${chapters.length} Capítulos Identificados`;
+  }
 
   dom.chapterList.innerHTML = "";
-  chapters.forEach((ch) => {
+  chapters.forEach((ch, idx) => {
+    const nextChPage = chapters[idx + 1] ? chapters[idx + 1].page_number - 1 : total_pages;
+    const endPage = Math.max(ch.page_number, nextChPage);
+    let sentsInChapter = 0;
+    for (let p = ch.page_number; p <= endPage && p <= pages.length; p++) {
+      sentsInChapter += pages[p - 1]?.sentences?.length || 0;
+    }
+
     const li = document.createElement("li");
-    li.className = "chapter-item";
+    li.className =
+      "chapter-item bg-surface-container-low p-space-sm rounded-xl flex items-center justify-between gap-space-sm relative overflow-hidden cursor-pointer hover:bg-surface-container transition-all";
     li.dataset.page = ch.page_number;
+    li.dataset.title = ch.title;
+
     li.innerHTML = `
-      <span>${ch.title}</span>
-      <span class="chapter-page-tag">Pág. ${ch.page_number}</span>
+      <div class="chapter-accent-bar hidden absolute left-0 top-0 bottom-0 w-1 bg-primary-container shadow-[0_0_10px_#00f0ff]"></div>
+      <div class="flex items-center gap-space-sm min-w-0 pl-1">
+        <div class="relative w-10 h-10 flex-shrink-0 flex items-center justify-center">
+          <svg class="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+            <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3"></path>
+            <path class="chapter-ring-path text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="100, 100" stroke-linecap="round" stroke-width="3"></path>
+          </svg>
+          <span class="chapter-ring-icon material-symbols-outlined text-secondary text-[16px] absolute">auto_stories</span>
+        </div>
+        <div class="flex flex-col min-w-0">
+          <span class="chapter-title-text font-headline-sm text-[15px] leading-tight text-on-surface font-medium truncate">${ch.title}</span>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span class="font-label-sm text-label-sm text-on-surface-variant">Págs. ${ch.page_number}–${endPage}</span>
+            <span class="w-1 h-1 rounded-full bg-surface-variant"></span>
+            <span class="font-label-sm text-label-sm text-primary-container font-semibold">${sentsInChapter} oraciones</span>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <button type="button" class="chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center active:scale-90 transition-transform">
+          <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+        </button>
+      </div>
     `;
-    li.addEventListener("click", () => goToPage(ch.page_number, 0, state.isPlaying));
+
+    li.addEventListener("click", () => {
+      switchMobileScreen("stage");
+      goToPage(ch.page_number, 0, true);
+    });
     dom.chapterList.appendChild(li);
   });
 
@@ -470,10 +558,14 @@ function renderChaptersAndPages() {
   for (let p = 1; p <= total_pages; p++) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "page-pill";
+    btn.className =
+      "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
     btn.dataset.page = p;
     btn.textContent = p;
-    btn.addEventListener("click", () => goToPage(p, 0, state.isPlaying));
+    btn.addEventListener("click", () => {
+      switchMobileScreen("stage");
+      goToPage(p, 0, state.isPlaying);
+    });
     dom.pageGrid.appendChild(btn);
   }
 }
@@ -492,16 +584,44 @@ async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   dom.btnPrevPageTop.disabled = clampedPage <= 1;
   dom.btnNextPageTop.disabled = clampedPage >= total;
 
+  // Actualizar cuadrícula de páginas
   document.querySelectorAll(".page-pill").forEach((el) => {
-    el.classList.toggle("active", parseInt(el.dataset.page, 10) === clampedPage);
+    const isCurrent = parseInt(el.dataset.page, 10) === clampedPage;
+    el.className = isCurrent
+      ? "page-pill py-2.5 rounded-lg bg-primary-container text-on-primary font-label-md text-label-md font-bold shadow-[0_0_12px_rgba(0,240,255,0.3)]"
+      : "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
   });
 
+  // Actualizar capítulo activo en el estilo Stitch
   let activeChapterPage = 1;
+  let activeChapterTitle = state.docData.title;
   for (const ch of state.docData.chapters) {
-    if (ch.page_number <= clampedPage) activeChapterPage = ch.page_number;
+    if (ch.page_number <= clampedPage) {
+      activeChapterPage = ch.page_number;
+      activeChapterTitle = ch.title;
+    }
   }
+  if (dom.playerChapterLabel) {
+    dom.playerChapterLabel.textContent = activeChapterTitle;
+  }
+
   document.querySelectorAll(".chapter-item").forEach((el) => {
-    el.classList.toggle("active", parseInt(el.dataset.page, 10) === activeChapterPage);
+    const isCurrent = parseInt(el.dataset.page, 10) === activeChapterPage;
+    const bar = el.querySelector(".chapter-accent-bar");
+    const ringIcon = el.querySelector(".chapter-ring-icon");
+    const playBtn = el.querySelector(".chapter-play-btn");
+    if (bar) bar.classList.toggle("hidden", !isCurrent);
+    if (ringIcon) {
+      ringIcon.textContent = isCurrent ? "volume_up" : "auto_stories";
+      ringIcon.className = isCurrent
+        ? "chapter-ring-icon material-symbols-outlined text-primary-container text-[18px] absolute animate-pulse"
+        : "chapter-ring-icon material-symbols-outlined text-secondary text-[16px] absolute";
+    }
+    if (playBtn) {
+      playBtn.className = isCurrent
+        ? "chapter-play-btn w-9 h-9 rounded-lg bg-primary-container text-on-primary flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.35)]"
+        : "chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center";
+    }
   });
 
   renderPageScript(pageObj);
@@ -520,48 +640,122 @@ function renderPageScript(pageObj) {
 
   if (sentences.length === 0) {
     dom.sentencesContainer.innerHTML = `
-      <div class="empty-hint">Esta página no contiene texto legible tras la limpieza inteligente.</div>
+      <div class="p-4 rounded-lg bg-surface-container/60 text-center font-body-sm text-body-sm text-on-surface-variant">
+        Esta página no contiene texto legible tras la limpieza inteligente.
+      </div>
     `;
     return;
   }
 
-  const paragraphsMap = new Map();
   sentences.forEach((s) => {
-    if (!paragraphsMap.has(s.paragraph_index)) {
-      paragraphsMap.set(s.paragraph_index, []);
-    }
-    paragraphsMap.get(s.paragraph_index).push(s);
-  });
-
-  paragraphsMap.forEach((paraSentences, paraIdx) => {
-    const pBlock = document.createElement("div");
-    pBlock.className = "paragraph-block";
-    pBlock.dataset.paragraphIndex = paraIdx;
-
-    paraSentences.forEach((s) => {
-      const span = document.createElement("span");
-      span.className = "sentence-span";
-      span.id = `sentence-node-${s.sentence_index}`;
-      span.dataset.sentenceIndex = s.sentence_index;
-      span.textContent = s.text + " ";
-      span.addEventListener("click", () => {
-        state.currentSentenceIdx = s.sentence_index;
-        highlightActiveSentence();
-        saveReadingProgress();
-        playCurrentSentence();
-      });
-      pBlock.appendChild(span);
+    const card = document.createElement("div");
+    card.id = `sentence-node-${s.sentence_index}`;
+    card.dataset.sentenceIndex = s.sentence_index;
+    card.addEventListener("click", () => {
+      state.currentSentenceIdx = s.sentence_index;
+      highlightActiveSentence();
+      saveReadingProgress();
+      playCurrentSentence();
     });
-
-    dom.sentencesContainer.appendChild(pBlock);
+    dom.sentencesContainer.appendChild(card);
   });
+}
+
+function highlightActiveSentence() {
+  const pageObj = state.docData?.pages?.[state.currentPage - 1];
+  const sentences = pageObj?.sentences || [];
+  const totalInPage = sentences.length;
+  const idx = state.currentSentenceIdx;
+
+  sentences.forEach((s, sIdx) => {
+    const node = document.getElementById(`sentence-node-${sIdx}`);
+    if (!node) return;
+    const numTag = `#${String(sIdx + 1).padStart(2, "0")}`;
+
+    if (sIdx === idx) {
+      // STITCH ACTIVE SENTENCE CARD (Neon Highlight & Now Speaking Indicator)
+      node.className =
+        "relative p-3 rounded-lg bg-surface-container-highest/90 border border-primary-container/35 shadow-[0_0_28px_rgba(0,240,255,0.22)] flex flex-col gap-1.5 transition-all";
+      node.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-container text-on-primary font-label-sm text-label-sm font-bold shadow-[0_0_10px_rgba(0,240,255,0.6)]">
+            <span class="material-symbols-outlined text-[13px] ${state.isPlaying ? "animate-spin" : ""}">sync</span>
+            Now Speaking · ${numTag}
+          </span>
+          <span class="font-label-sm text-label-sm text-primary-container font-mono">Pág. ${state.currentPage}</span>
+        </div>
+        <p class="font-body-md text-body-md text-primary font-medium tracking-normal leading-relaxed pl-2 border-l-2 border-primary-container bg-gradient-to-r from-primary-container/10 to-transparent py-1 rounded">
+          ${s.text}
+        </p>
+        <div class="flex items-center gap-2 pt-0.5 font-label-sm text-label-sm text-secondary">
+          <span class="material-symbols-outlined text-[14px]">graphic_eq</span>
+          <span>Speed: ${state.playbackSpeed}x • Voice: ${state.selectedVoice}</span>
+        </div>
+      `;
+    } else if (sIdx < idx) {
+      // STITCH COMPLETED SENTENCE CARD
+      node.className =
+        "p-2.5 rounded-lg bg-surface-container/60 opacity-60 flex items-start gap-2.5 cursor-pointer hover:opacity-90 transition-all";
+      node.innerHTML = `
+        <span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">${numTag}</span>
+        <p class="font-body-sm text-body-sm text-on-surface-variant leading-normal">${s.text}</p>
+      `;
+    } else {
+      // STITCH UPCOMING SENTENCE CARD
+      node.className =
+        "p-2.5 rounded-lg bg-surface-container/60 flex items-start gap-2.5 hover:bg-surface-container-high transition-colors cursor-pointer";
+      node.innerHTML = `
+        <span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">${numTag}</span>
+        <p class="font-body-sm text-body-sm text-on-surface leading-normal">${s.text}</p>
+      `;
+    }
+  });
+
+  const activeNode = document.getElementById(`sentence-node-${idx}`);
+  if (activeNode) {
+    activeNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  const currentSentenceObj = sentences[idx];
+  if (currentSentenceObj) {
+    dom.nowPlayingSentence.textContent = currentSentenceObj.text;
+    dom.sentenceCounterLabel.textContent = `Oración ${idx + 1} de ${totalInPage}`;
+    if (dom.activeParaBadge) {
+      dom.activeParaBadge.textContent = `Párrafo ${currentSentenceObj.paragraph_index + 1} • Enfoque Sincronizado`;
+    }
+    if (dom.activeParaPreviewText) {
+      dom.activeParaPreviewText.textContent = currentSentenceObj.text;
+    }
+    const pagePct = totalInPage > 0 ? Math.round(((idx + 1) / totalInPage) * 100) : 0;
+    dom.pageProgressFill.style.width = `${pagePct}%`;
+  } else {
+    dom.nowPlayingSentence.textContent = "Página sin texto.";
+    dom.sentenceCounterLabel.textContent = "Oración 0 de 0";
+    dom.pageProgressFill.style.width = "0%";
+  }
+
+  if (state.docData) {
+    let readBeforePage = 0;
+    for (let i = 0; i < state.currentPage - 1; i++) {
+      readBeforePage += state.docData.pages[i].sentences.length;
+    }
+    const globalIdx = readBeforePage + idx + 1;
+    const globalTotal = Math.max(1, state.docData.total_sentences);
+    const bookPct = Math.min(100, Math.round((globalIdx / globalTotal) * 100));
+    dom.bookProgressPct.textContent = `${bookPct}%`;
+    if (dom.bookProgressBarFill) {
+      dom.bookProgressBarFill.style.width = `${bookPct}%`;
+    }
+  }
+
+  updatePdfHighlightBox();
 }
 
 async function renderPdfPageCanvas(pageNumber) {
   if (!state.pdfJsDoc) return;
   try {
     const page = await state.pdfJsDoc.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: 1.15 });
+    const viewport = page.getViewport({ scale: 1.1 });
     const canvas = dom.pdfCanvas;
     const ctx = canvas.getContext("2d");
     canvas.width = viewport.width;
@@ -590,51 +784,6 @@ function updatePdfHighlightBox() {
   dom.pdfHighlightBox.style.height = `${((y1 - y0) * 100).toFixed(2)}%`;
 }
 
-function highlightActiveSentence() {
-  const pageObj = state.docData?.pages?.[state.currentPage - 1];
-  const sentences = pageObj?.sentences || [];
-  const totalInPage = sentences.length;
-  const idx = state.currentSentenceIdx;
-
-  document.querySelectorAll(".sentence-span").forEach((el) => {
-    const sIdx = parseInt(el.dataset.sentenceIndex, 10);
-    el.classList.toggle("active-sentence", sIdx === idx);
-    el.classList.toggle("read-sentence", sIdx < idx);
-  });
-
-  const activeNode = document.getElementById(`sentence-node-${idx}`);
-  document.querySelectorAll(".paragraph-block").forEach((p) => p.classList.remove("active-paragraph"));
-  if (activeNode) {
-    activeNode.parentElement?.classList.add("active-paragraph");
-    activeNode.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-
-  const currentSentenceObj = sentences[idx];
-  if (currentSentenceObj) {
-    dom.nowPlayingSentence.textContent = currentSentenceObj.text;
-    dom.sentenceCounterLabel.textContent = `${idx + 1} / ${totalInPage}`;
-    const pagePct = totalInPage > 0 ? Math.round(((idx + 1) / totalInPage) * 100) : 0;
-    dom.pageProgressFill.style.width = `${pagePct}%`;
-  } else {
-    dom.nowPlayingSentence.textContent = "Página sin texto.";
-    dom.sentenceCounterLabel.textContent = "0 / 0";
-    dom.pageProgressFill.style.width = "0%";
-  }
-
-  if (state.docData) {
-    let readBeforePage = 0;
-    for (let i = 0; i < state.currentPage - 1; i++) {
-      readBeforePage += state.docData.pages[i].sentences.length;
-    }
-    const globalIdx = readBeforePage + idx + 1;
-    const globalTotal = Math.max(1, state.docData.total_sentences);
-    const bookPct = Math.min(100, Math.round((globalIdx / globalTotal) * 100));
-    dom.bookProgressPct.textContent = `${bookPct}%`;
-  }
-
-  updatePdfHighlightBox();
-}
-
 function togglePlayPause() {
   if (!state.docData) return;
   if (state.isPlaying) {
@@ -652,6 +801,7 @@ function stopPlayback() {
     window.speechSynthesis.cancel();
   }
   updatePlayButtonUI(false);
+  highlightActiveSentence();
 }
 
 function updatePlayButtonUI(playing) {
