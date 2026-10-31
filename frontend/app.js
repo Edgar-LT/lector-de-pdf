@@ -1,7 +1,6 @@
 /**
- * VoxPDF Studio - Frontend Controller (Stitch Kinetic Precision Design System)
- * Arquitectura Híbrida: Python FastAPI + PyMuPDF + Edge-TTS / Modo Web Live PDF.js
- * Sincronización total entre Audio, Capítulos y Páginas sin saltos de scroll ni cambios de vista forzados.
+ * VoxPDF — Controlador Frontend
+ * Lector y conversor de PDF a voz con sincronización de páginas y capítulos.
  * Desarrollado por Edgar López.
  */
 
@@ -29,7 +28,6 @@ const dom = {
   pdfFileInput: document.getElementById("pdfFileInput"),
   engineBadge: document.getElementById("engineBadge"),
   engineBadgeText: document.getElementById("engineBadgeText"),
-  headerScreenSubtitle: document.getElementById("headerScreenSubtitle"),
   emptyStateDropzone: document.getElementById("emptyStateDropzone"),
   readerSplitContainer: document.getElementById("readerSplitContainer"),
   screenReaderAudio: document.getElementById("screenReaderAudio"),
@@ -59,15 +57,13 @@ const dom = {
   bookProgressPct: document.getElementById("bookProgressPct"),
   bookProgressBarFill: document.getElementById("bookProgressBarFill"),
 
-  // Visor PDF y DAW Focus Card
+  // Visor PDF y Texto
   pdfHeaderDocName: document.getElementById("pdfHeaderDocName"),
-  activeParaBadge: document.getElementById("activeParaBadge"),
-  activeParaPreviewText: document.getElementById("activeParaPreviewText"),
   pdfCanvas: document.getElementById("pdfCanvas"),
   pdfHighlightBox: document.getElementById("pdfHighlightBox"),
   sentencesContainer: document.getElementById("sentencesContainer"),
 
-  // Reproductor flotante Stitch
+  // Reproductor inferior
   btnPrevSentence: document.getElementById("btnPrevSentence"),
   btnPlayPause: document.getElementById("btnPlayPause"),
   btnNextSentence: document.getElementById("btnNextSentence"),
@@ -120,25 +116,25 @@ async function detectEnvironmentAndVoices() {
     const data = await voicesRes.json();
 
     state.backendAvailable = true;
-    dom.engineBadgeText.textContent = "Python Neural";
+    if (dom.engineBadgeText) dom.engineBadgeText.textContent = "Activo";
     dom.voiceSelect.innerHTML = "";
     (data.voices || []).forEach((v) => {
       const opt = document.createElement("option");
       opt.value = v.id;
-      opt.className = "bg-surface-container text-primary";
-      opt.textContent = `${v.name}`;
+      opt.className = "bg-surface text-slate-100";
+      opt.textContent = v.name;
       dom.voiceSelect.appendChild(opt);
     });
 
     const browserOpt = document.createElement("option");
     browserOpt.value = "browser-local";
-    browserOpt.className = "bg-surface-container text-primary";
-    browserOpt.textContent = "Voz del Sistema (Offline)";
+    browserOpt.className = "bg-surface text-slate-100";
+    browserOpt.textContent = "Voz del sistema (sin conexión)";
     dom.voiceSelect.appendChild(browserOpt);
   } catch (_) {
     state.backendAvailable = false;
     state.selectedVoice = "browser-local";
-    dom.engineBadgeText.textContent = "Web Live Engine";
+    if (dom.engineBadgeText) dom.engineBadgeText.textContent = "Local";
     populateBrowserSpeechVoices();
     if (window.speechSynthesis) {
       window.speechSynthesis.onvoiceschanged = populateBrowserSpeechVoices;
@@ -156,8 +152,8 @@ function populateBrowserSpeechVoices() {
   if (list.length === 0) {
     const opt = document.createElement("option");
     opt.value = "browser-local";
-    opt.className = "bg-surface-container text-primary";
-    opt.textContent = "Voz del Navegador (ES/EN)";
+    opt.className = "bg-surface text-slate-100";
+    opt.textContent = "Voz del navegador (ES/EN)";
     dom.voiceSelect.appendChild(opt);
     return;
   }
@@ -165,7 +161,7 @@ function populateBrowserSpeechVoices() {
   list.forEach((v) => {
     const opt = document.createElement("option");
     opt.value = `browser:${v.name}`;
-    opt.className = "bg-surface-container text-primary";
+    opt.className = "bg-surface text-slate-100";
     opt.textContent = `${v.name} (${v.lang})`;
     dom.voiceSelect.appendChild(opt);
   });
@@ -202,15 +198,15 @@ function setupEventListeners() {
     });
   });
 
-  // Segmented Tabs: Chapters (TOC) vs Page Grid
+  // Pestañas: Capítulos vs Páginas
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".tab-btn").forEach((b) => {
         b.className =
-          "tab-btn py-2.5 rounded-lg text-on-surface-variant font-label-md text-label-md font-medium flex items-center justify-center gap-2 hover:text-on-surface transition-all";
+          "tab-btn py-1.5 rounded-md text-slate-400 hover:text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors";
       });
       btn.className =
-        "tab-btn active py-2.5 rounded-lg bg-surface-container-high text-primary-container font-label-md text-label-md font-semibold shadow-[0_0_12px_rgba(0,240,255,0.2)] flex items-center justify-center gap-2 transition-all";
+        "tab-btn active py-1.5 rounded-md bg-surface-elevated text-slate-100 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors";
 
       const showChapters = btn.dataset.tab === "chapters";
       document.getElementById("tabChapters").classList.toggle("hidden", !showChapters);
@@ -218,15 +214,15 @@ function setupEventListeners() {
     });
   });
 
-  // Segmented View Mode Switcher (Split / Script / PDF)
+  // Selector de modo de vista (Dividida / Texto / PDF)
   document.querySelectorAll(".view-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".view-mode-btn").forEach((b) => {
         b.className =
-          "view-mode-btn py-1.5 px-2 rounded font-label-sm text-label-sm text-center font-medium text-on-surface-variant hover:text-primary transition-all";
+          "view-mode-btn py-1 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors";
       });
       btn.className =
-        "view-mode-btn active py-1.5 px-2 rounded font-label-sm text-label-sm text-center font-medium bg-primary-container text-on-primary shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-all";
+        "view-mode-btn active py-1 px-2.5 rounded-md text-xs font-medium bg-surface-elevated text-slate-100 transition-colors";
 
       dom.readerSplitContainer.classList.remove("view-split", "view-script", "view-pdf");
       dom.readerSplitContainer.classList.add(`view-${btn.dataset.view}`);
@@ -234,7 +230,7 @@ function setupEventListeners() {
     });
   });
 
-  // Cambio de página unido al audio (sin hacer scroll ni mover la pantalla del usuario)
+  // Cambio de página unido al audio, sin forzar scroll
   dom.btnPrevPageTop.addEventListener("click", () => goToPage(state.currentPage - 1, 0, state.isPlaying));
   dom.btnNextPageTop.addEventListener("click", () => goToPage(state.currentPage + 1, 0, state.isPlaying));
 
@@ -295,7 +291,7 @@ function setupEventListeners() {
     });
   }
 
-  // Stitch Mobile Bottom Navigation Switching (< 1024px) — solo cuando el usuario toca la barra inferior
+  // Navegación inferior móvil (< 1024px)
   document.querySelectorAll(".mobile-nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       switchMobileScreen(btn.dataset.mobilePanel);
@@ -308,15 +304,9 @@ function switchMobileScreen(panelName) {
   document.querySelectorAll(".mobile-nav-btn").forEach((b) => {
     const isActive = b.dataset.mobilePanel === panelName;
     b.className = isActive
-      ? "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-space-md text-primary-container font-semibold transition-colors active:scale-95"
-      : "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-space-md text-on-surface-variant transition-colors active:scale-95";
+      ? "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-accent-light font-medium transition-colors"
+      : "mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-slate-400 transition-colors";
   });
-
-  if (dom.headerScreenSubtitle) {
-    dom.headerScreenSubtitle.textContent = showSidebar
-      ? "Chapters & Cleaning · Kinetic Precision"
-      : "Reader & Audio · Kinetic Precision";
-  }
 
   if (showSidebar) {
     dom.screenChaptersCleaning.classList.remove("hidden");
@@ -338,7 +328,7 @@ async function handleUploadFile(file, keepPosition = false) {
   state.rawFile = file;
   state.audioBlobCache.clear();
 
-  dom.nowPlayingSentence.textContent = "Analizando PDF y aplicando limpieza inteligente BBox...";
+  dom.nowPlayingSentence.textContent = "Procesando documento PDF...";
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -384,7 +374,7 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
   let totalSentences = 0;
   let totalWords = 0;
   const pages = [];
-  const chapters = [{ id: "ch_1", level: 1, title: "1. Inicio del Documento", page_number: 1 }];
+  const chapters = [{ id: "ch_1", level: 1, title: "Inicio del documento", page_number: 1 }];
   const pageNumRegex = /^\s*(?:p[áa]gina|p[áa]g\.?|page)?\s*\d+\s*(?:(?:de|of|\/|-)\s*\d+)?\s*$/i;
 
   for (let p = 1; p <= totalPages; p++) {
@@ -441,7 +431,7 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
     doc_id: `${filename}_${arrayBuffer.byteLength}`,
     filename,
     title: filename.replace(/\.pdf$/i, ""),
-    author: "Modo Web PDF.js",
+    author: "",
     total_pages: totalPages,
     total_sentences: totalSentences,
     total_words: totalWords,
@@ -472,14 +462,14 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
   dom.emptyStateDropzone.classList.add("hidden");
   dom.readerSplitContainer.classList.remove("hidden");
 
-  const sizeMb = state.rawFile ? `${(state.rawFile.size / (1024 * 1024)).toFixed(1)} MB` : "PDF Master";
+  const sizeMb = state.rawFile ? `${(state.rawFile.size / (1024 * 1024)).toFixed(1)} MB` : "PDF";
   dom.docTitleText.textContent = parsed.title;
   dom.docTitleText.title = parsed.title;
   dom.docMetaText.textContent = sizeMb;
-  dom.pdfHeaderDocName.textContent = `Doc: ${parsed.filename}`;
-  dom.docDurationBadge.textContent = `~${parsed.estimated_duration_minutes} min listen`;
+  dom.pdfHeaderDocName.textContent = parsed.filename;
+  dom.docDurationBadge.textContent = `~${parsed.estimated_duration_minutes} min`;
   dom.statPages.textContent = parsed.total_pages;
-  dom.statSentences.textContent = parsed.total_sentences.toLocaleString();
+  if (dom.statSentences) dom.statSentences.textContent = parsed.total_sentences.toLocaleString();
   dom.statWords.textContent = parsed.total_words.toLocaleString();
   dom.totalPagesLabel.textContent = parsed.total_pages;
 
@@ -503,55 +493,32 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
 }
 
 function renderChaptersAndPages() {
-  const { chapters, total_pages, pages } = state.docData;
+  const { chapters, total_pages } = state.docData;
 
   if (dom.chapterCountLabel) {
-    dom.chapterCountLabel.textContent = `${chapters.length} Capítulos Identificados`;
+    dom.chapterCountLabel.textContent = `${chapters.length} ${chapters.length === 1 ? "sección" : "secciones"}`;
   }
 
   dom.chapterList.innerHTML = "";
   chapters.forEach((ch, idx) => {
     const nextChPage = chapters[idx + 1] ? chapters[idx + 1].page_number - 1 : total_pages;
     const endPage = Math.max(ch.page_number, nextChPage);
-    let sentsInChapter = 0;
-    for (let p = ch.page_number; p <= endPage && p <= pages.length; p++) {
-      sentsInChapter += pages[p - 1]?.sentences?.length || 0;
-    }
 
     const li = document.createElement("li");
     li.className =
-      "chapter-item bg-surface-container-low p-space-sm rounded-xl flex items-center justify-between gap-space-sm relative overflow-hidden cursor-pointer hover:bg-surface-container transition-all";
+      "chapter-item px-3 py-2.5 rounded-lg bg-bg-base/60 hover:bg-surface-elevated border border-transparent flex items-center justify-between gap-2 cursor-pointer transition-colors";
     li.dataset.page = ch.page_number;
     li.dataset.endPage = endPage;
     li.dataset.title = ch.title;
 
     li.innerHTML = `
-      <div class="chapter-accent-bar hidden absolute left-0 top-0 bottom-0 w-1 bg-primary-container shadow-[0_0_10px_#00f0ff]"></div>
-      <div class="flex items-center gap-space-sm min-w-0 pl-1">
-        <div class="relative w-10 h-10 flex-shrink-0 flex items-center justify-center">
-          <svg class="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
-            <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3"></path>
-            <path class="chapter-ring-path text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="0, 100" stroke-linecap="round" stroke-width="3"></path>
-          </svg>
-          <span class="chapter-ring-icon material-symbols-outlined text-secondary text-[16px] absolute">auto_stories</span>
-        </div>
-        <div class="flex flex-col min-w-0">
-          <span class="chapter-title-text font-headline-sm text-[15px] leading-tight text-on-surface font-medium truncate">${ch.title}</span>
-          <div class="flex items-center gap-2 mt-0.5">
-            <span class="font-label-sm text-label-sm text-on-surface-variant">Págs. ${ch.page_number}–${endPage}</span>
-            <span class="w-1 h-1 rounded-full bg-surface-variant"></span>
-            <span class="font-label-sm text-label-sm text-primary-container font-semibold">${sentsInChapter} oraciones</span>
-          </div>
-        </div>
+      <div class="flex items-center gap-2.5 min-w-0">
+        <span class="chapter-idx font-mono text-[11px] text-slate-500 flex-shrink-0">${String(idx + 1).padStart(2, "0")}</span>
+        <span class="chapter-title-text text-xs text-slate-200 font-medium truncate">${ch.title}</span>
       </div>
-      <div class="flex items-center gap-1 flex-shrink-0">
-        <button type="button" title="Reproducir capítulo" class="chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center active:scale-90 transition-transform">
-          <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
-        </button>
-      </div>
+      <span class="font-mono text-[11px] text-slate-400 flex-shrink-0">p. ${ch.page_number}</span>
     `;
 
-    // Selección de capítulo unida al audio, sin cambiar de pantalla ni hacer scroll forzado
     li.addEventListener("click", () => {
       goToPage(ch.page_number, 0, true);
     });
@@ -564,7 +531,7 @@ function renderChaptersAndPages() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className =
-      "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
+      "page-pill py-1.5 rounded-md bg-bg-base hover:bg-surface-elevated border border-white/[0.05] text-slate-300 font-mono text-xs transition-colors";
     btn.dataset.page = p;
     btn.textContent = p;
     btn.addEventListener("click", () => {
@@ -575,8 +542,7 @@ function renderChaptersAndPages() {
 }
 
 /**
- * Cambia de página y sincroniza capítulo/audio manteniendo intacta la posición de scroll
- * de la ventana para no enviar forzosamente al usuario a otra parte de la pantalla.
+ * Cambia de página y sincroniza capítulo y audio preservando la posición de scroll de la ventana.
  */
 async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   if (!state.docData) return;
@@ -595,12 +561,11 @@ async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   dom.btnPrevPageTop.disabled = clampedPage <= 1;
   dom.btnNextPageTop.disabled = clampedPage >= total;
 
-  // Actualizar cuadrícula de páginas
   document.querySelectorAll(".page-pill").forEach((el) => {
     const isCurrent = parseInt(el.dataset.page, 10) === clampedPage;
     el.className = isCurrent
-      ? "page-pill py-2.5 rounded-lg bg-primary-container text-on-primary font-label-md text-label-md font-bold shadow-[0_0_12px_rgba(0,240,255,0.3)]"
-      : "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
+      ? "page-pill py-1.5 rounded-md bg-accent text-white font-mono text-xs font-medium"
+      : "page-pill py-1.5 rounded-md bg-bg-base hover:bg-surface-elevated border border-white/[0.05] text-slate-300 font-mono text-xs transition-colors";
   });
 
   if (pageChanged) {
@@ -611,7 +576,6 @@ async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   highlightActiveSentence();
   saveReadingProgress();
 
-  // Restaurar cualquier desplazamiento involuntario del navegador al actualizar el DOM
   if (Math.abs(window.scrollY - savedWindowScrollY) > 2) {
     window.scrollTo({ top: savedWindowScrollY, behavior: "instant" });
   }
@@ -627,8 +591,8 @@ function renderPageScript(pageObj) {
 
   if (sentences.length === 0) {
     dom.sentencesContainer.innerHTML = `
-      <div class="p-4 rounded-lg bg-surface-container/60 text-center font-body-sm text-body-sm text-on-surface-variant">
-        Esta página no contiene texto legible tras la limpieza inteligente.
+      <div class="p-4 rounded-lg bg-bg-base/50 text-center text-xs text-slate-400">
+        Esta página no contiene texto legible tras filtrar márgenes.
       </div>
     `;
     return;
@@ -658,65 +622,44 @@ function highlightActiveSentence() {
   sentences.forEach((s, sIdx) => {
     const node = document.getElementById(`sentence-node-${sIdx}`);
     if (!node) return;
-    const numTag = `#${String(sIdx + 1).padStart(2, "0")}`;
+    const numTag = String(sIdx + 1).padStart(2, "0");
 
     if (sIdx === idx) {
       node.className =
-        "relative p-3 rounded-lg bg-surface-container-highest/90 border border-primary-container/35 shadow-[0_0_28px_rgba(0,240,255,0.22)] flex flex-col gap-1.5 transition-all";
+        "px-3.5 py-2.5 rounded-lg bg-accent/[0.1] border-l-2 border-accent-light flex items-start gap-3 cursor-pointer transition-colors";
       node.innerHTML = `
-        <div class="flex items-center justify-between">
-          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-container text-on-primary font-label-sm text-label-sm font-bold shadow-[0_0_10px_rgba(0,240,255,0.6)]">
-            <span class="material-symbols-outlined text-[13px] ${state.isPlaying ? "animate-spin" : ""}">sync</span>
-            Now Speaking · ${numTag}
-          </span>
-          <span class="font-label-sm text-label-sm text-primary-container font-mono">Pág. ${state.currentPage}</span>
-        </div>
-        <p class="font-body-md text-body-md text-primary font-medium tracking-normal leading-relaxed pl-2 border-l-2 border-primary-container bg-gradient-to-r from-primary-container/10 to-transparent py-1 rounded">
-          ${s.text}
-        </p>
-        <div class="flex items-center gap-2 pt-0.5 font-label-sm text-label-sm text-secondary">
-          <span class="material-symbols-outlined text-[14px]">graphic_eq</span>
-          <span>Speed: ${state.playbackSpeed}x • Voice: ${state.selectedVoice}</span>
-        </div>
+        <span class="font-mono text-[11px] text-accent-light mt-0.5 select-none">${numTag}</span>
+        <p class="text-sm text-slate-100 leading-relaxed font-medium">${s.text}</p>
       `;
     } else if (sIdx < idx) {
       node.className =
-        "p-2.5 rounded-lg bg-surface-container/60 opacity-60 flex items-start gap-2.5 cursor-pointer hover:opacity-90 transition-all";
+        "px-3.5 py-2 rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer opacity-55 hover:opacity-90 transition-all";
       node.innerHTML = `
-        <span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">${numTag}</span>
-        <p class="font-body-sm text-body-sm text-on-surface-variant leading-normal">${s.text}</p>
+        <span class="font-mono text-[11px] text-slate-500 mt-0.5 select-none">${numTag}</span>
+        <p class="text-sm text-slate-300 leading-relaxed">${s.text}</p>
       `;
     } else {
       node.className =
-        "p-2.5 rounded-lg bg-surface-container/60 flex items-start gap-2.5 hover:bg-surface-container-high transition-colors cursor-pointer";
+        "px-3.5 py-2 rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer transition-colors";
       node.innerHTML = `
-        <span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">${numTag}</span>
-        <p class="font-body-sm text-body-sm text-on-surface leading-normal">${s.text}</p>
+        <span class="font-mono text-[11px] text-slate-500 mt-0.5 select-none">${numTag}</span>
+        <p class="text-sm text-slate-200 leading-relaxed">${s.text}</p>
       `;
     }
   });
-
-  // Nota: No llamamos a scrollIntoView() para que el usuario tenga total libertad en la pantalla.
 
   const currentSentenceObj = sentences[idx];
   if (currentSentenceObj) {
     dom.nowPlayingSentence.textContent = currentSentenceObj.text;
     dom.sentenceCounterLabel.textContent = `Oración ${idx + 1} de ${totalInPage}`;
-    if (dom.activeParaBadge) {
-      dom.activeParaBadge.textContent = `Pág. ${state.currentPage} · Párrafo ${currentSentenceObj.paragraph_index + 1}`;
-    }
-    if (dom.activeParaPreviewText) {
-      dom.activeParaPreviewText.textContent = currentSentenceObj.text;
-    }
     const pagePct = totalInPage > 0 ? Math.round(((idx + 1) / totalInPage) * 100) : 0;
     dom.pageProgressFill.style.width = `${pagePct}%`;
   } else {
     dom.nowPlayingSentence.textContent = "Página sin texto.";
-    dom.sentenceCounterLabel.textContent = "Oración 0 de 0";
+    dom.sentenceCounterLabel.textContent = "0 / 0";
     dom.pageProgressFill.style.width = "0%";
   }
 
-  // Actualizar progreso global y capítulo activo sincronizado con la lectura
   let readBeforePage = 0;
   for (let i = 0; i < state.currentPage - 1; i++) {
     readBeforePage += state.docData.pages[i]?.sentences?.length || 0;
@@ -743,38 +686,10 @@ function highlightActiveSentence() {
 
   document.querySelectorAll(".chapter-item").forEach((el) => {
     const chStart = parseInt(el.dataset.page, 10);
-    const chEnd = parseInt(el.dataset.endPage, 10) || chStart;
     const isCurrent = chStart === activeChapterPage;
-
-    const bar = el.querySelector(".chapter-accent-bar");
-    const ringIcon = el.querySelector(".chapter-ring-icon");
-    const ringPath = el.querySelector(".chapter-ring-path");
-    const playBtn = el.querySelector(".chapter-play-btn");
-
-    let chPct = 0;
-    if (state.currentPage > chEnd) {
-      chPct = 100;
-    } else if (state.currentPage >= chStart && state.currentPage <= chEnd) {
-      const span = Math.max(1, chEnd - chStart + 1);
-      const pageProgress = totalInPage > 0 ? (idx + 1) / totalInPage : 0;
-      chPct = Math.min(100, Math.round((((state.currentPage - chStart) + pageProgress) / span) * 100));
-    }
-
-    if (ringPath) {
-      ringPath.setAttribute("stroke-dasharray", `${chPct}, 100`);
-    }
-    if (bar) bar.classList.toggle("hidden", !isCurrent);
-    if (ringIcon) {
-      ringIcon.textContent = isCurrent ? "volume_up" : chPct >= 100 ? "check_circle" : "auto_stories";
-      ringIcon.className = isCurrent
-        ? "chapter-ring-icon material-symbols-outlined text-primary-container text-[18px] absolute animate-pulse"
-        : "chapter-ring-icon material-symbols-outlined text-secondary text-[16px] absolute";
-    }
-    if (playBtn) {
-      playBtn.className = isCurrent
-        ? "chapter-play-btn w-9 h-9 rounded-lg bg-primary-container text-on-primary flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.35)]"
-        : "chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center";
-    }
+    el.className = isCurrent
+      ? "chapter-item px-3 py-2.5 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-between gap-2 cursor-pointer transition-colors"
+      : "chapter-item px-3 py-2.5 rounded-lg bg-bg-base/60 hover:bg-surface-elevated border border-transparent flex items-center justify-between gap-2 cursor-pointer transition-colors";
   });
 
   updatePdfHighlightBox();
@@ -868,7 +783,7 @@ async function fetchSentenceAudioBlobUrl(text) {
   });
 
   if (!res.ok) {
-    throw new Error("Fallo en síntesis neuronal");
+    throw new Error("Fallo en síntesis de voz");
   }
 
   const blob = await res.blob();
@@ -987,7 +902,7 @@ async function advanceToNextSentenceAuto() {
     await goToPage(state.currentPage + 1, 0, true);
   } else {
     stopPlayback();
-    dom.nowPlayingSentence.textContent = "🎉 ¡Has terminado de escuchar el documento!";
+    dom.nowPlayingSentence.textContent = "Lectura del documento finalizada.";
   }
 }
 
@@ -1044,7 +959,7 @@ function checkSavedProgress(docId) {
       return;
     }
 
-    dom.resumeBannerText.textContent = `Guardado automático: te quedaste en la Página ${saved.page}, Oración ${saved.sentence + 1}.`;
+    dom.resumeBannerText.textContent = `Continuar desde la página ${saved.page}, oración ${saved.sentence + 1}.`;
     dom.resumeBanner.classList.remove("hidden");
 
     dom.btnResumeConfirm.onclick = () => {
@@ -1086,7 +1001,7 @@ async function handleExportMp3() {
   const endPage = Math.max(startPage, parseInt(dom.exportEndPage.value, 10) || startPage);
 
   dom.btnConfirmExport.disabled = true;
-  dom.exportStatusMsg.textContent = `Sintetizando audiolibro con voz neuronal (Páginas ${startPage} a ${endPage})...`;
+  dom.exportStatusMsg.textContent = `Generando archivo MP3 (páginas ${startPage} a ${endPage})...`;
   dom.exportStatusMsg.classList.remove("hidden");
 
   try {
@@ -1117,7 +1032,7 @@ async function handleExportMp3() {
     a.click();
     a.remove();
 
-    dom.exportStatusMsg.textContent = "✓ ¡Audiolibro MP3 generado y descargado con éxito!";
+    dom.exportStatusMsg.textContent = "Archivo MP3 descargado.";
   } catch (err) {
     dom.exportStatusMsg.textContent = `Error: ${err.message}`;
   } finally {

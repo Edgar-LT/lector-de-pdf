@@ -1,27 +1,29 @@
 /* ==========================================================================
-   STITCH KINETIC PRECISION — COMPLEMENTARY STUDIO STYLES
-   VoxPDF Studio // Edgar López
+   VOXPDF STUDIO — EDITORIAL DARK INTERFACE
+   Diseño sobrio, limpio y centrado en la lectura // Edgar López
    ========================================================================== */
 
 :root {
-  --bg-base: #0f131c;
-  --bg-surface: #181c24;
-  --bg-elevated: #262a33;
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --text-primary: #dfe2ee;
-  --text-secondary: #b9cacb;
-  --text-muted: #849495;
-  --accent-cyan: #00f0ff;
-  --accent-indigo: #c0c1ff;
+  --bg-base: #0b0d12;
+  --bg-surface: #11141c;
+  --bg-elevated: #171b26;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
 }
 
-html, body {
+html,
+body {
   width: 100%;
   margin: 0;
   padding: 0;
-  background-color: #0f131c;
-  color: #dfe2ee;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
   overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 .pb-safe {
@@ -36,27 +38,26 @@ html, body {
   display: none !important;
 }
 
-/* Custom Sleek Studio Scrollbars */
+/* Scrollbars discretos */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(10, 14, 22, 0.6);
-  border-radius: 999px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 240, 255, 0.25);
+  background: rgba(148, 163, 184, 0.2);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 240, 255, 0.5);
+  background: rgba(148, 163, 184, 0.35);
 }
 
-/* View Mode Toggles (Split / Audio Script / Original PDF) */
+/* Modos de vista (Dividida / Solo Texto / Solo PDF) */
 #readerSplitContainer.view-script #pdfPane {
   display: none !important;
 }
@@ -65,27 +66,30 @@ html, body {
   display: none !important;
 }
 
-/* PDF.js Canvas Bounding Box Highlight Overlay */
+/* Resaltado de oración sobre el lienzo PDF.js */
 .pdf-highlight-box {
   position: absolute;
-  border: 2px solid #00f0ff;
-  background: rgba(0, 240, 255, 0.18);
-  border-radius: 4px;
+  border: 1.5px solid rgba(99, 102, 241, 0.85);
+  background: rgba(99, 102, 241, 0.14);
+  border-radius: 3px;
   pointer-events: none;
-  transition: all 0.22s ease;
-  box-shadow: 0 0 18px rgba(0, 240, 255, 0.45);
+  transition: all 0.18s ease;
 }
 
-/* Dropzone Dragover Effect */
+/* Efecto al arrastrar archivo sobre la zona de carga */
 #emptyStateDropzone.dragover {
-  border-color: #00f0ff;
-  background: rgba(0, 240, 255, 0.06);
-  box-shadow: 0 0 28px rgba(0, 240, 255, 0.2);
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.06);
 }
 
-/* Equalizer Animation when Playing */
+/* Indicador de audio en reproducción */
+.audio-visualizer span {
+  transition: transform 0.2s ease;
+  transform: scaleY(0.35);
+}
+
 .audio-visualizer.playing span {
-  animation: stitchEqBounce 0.65s infinite ease-in-out alternate;
+  animation: eqBar 0.7s infinite ease-in-out alternate;
 }
 
 .audio-visualizer.playing span:nth-child(2) {
@@ -100,21 +104,21 @@ html, body {
   animation-delay: 0.45s;
 }
 
-@keyframes stitchEqBounce {
+@keyframes eqBar {
   0% {
-    transform: scaleY(0.35);
+    transform: scaleY(0.3);
   }
   100% {
-    transform: scaleY(1.15);
+    transform: scaleY(1);
   }
 }
 
-/* Modals & GDPR Banner */
+/* Modales y banner de privacidad */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(10, 14, 22, 0.82);
-  backdrop-filter: blur(8px);
+  background: rgba(7, 9, 14, 0.78);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -124,20 +128,20 @@ html, body {
 
 .consent-banner {
   position: fixed;
-  bottom: 4.5rem;
+  bottom: 4.25rem;
   left: 50%;
   transform: translateX(-50%);
-  width: min(94vw, 760px);
-  background: rgba(24, 28, 36, 0.96);
-  border: 1px solid rgba(0, 240, 255, 0.4);
-  border-radius: 12px;
+  width: min(94vw, 680px);
+  background: #151923;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
   padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   z-index: 90;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
 }
 
 @media (min-width: 1024px) {

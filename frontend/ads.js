@@ -1,21 +1,15 @@
 /**
  * VoxPDF Studio — Gestor Unificado de Monetización por Anuncios (AdMob Android + Web AdSense)
  * Desarrollado por Edgar López.
- *
- * NOTA IMPORTANTE PARA PRODUCCIÓN:
- * Los IDs configurados por defecto corresponden a los IDs de prueba oficiales de Google AdMob
- * (https://developers.google.com/admob/android/test-ads) para evitar clics inválidos durante
- * el desarrollo. Antes de subir el .aab a Google Play Console, reemplaza PRODUCTION_IDS con
- * los códigos de tu cuenta de AdMob / AdSense.
  */
 
 window.VoxAdManager = (function () {
   const ADMOB_CONFIG = {
     isTesting: true,
-    androidBannerId: "ca-app-pub-3940256099942544/6300978111",     // ID oficial de prueba Google Banner
-    androidRewardedId: "ca-app-pub-3940256099942544/5224354917",   // ID oficial de prueba Google Rewarded
-    webAdSenseClient: "ca-pub-0000000000000000",                   // Reemplazar en producción Web
-    rewardMinutesPerAd: 30,                                        // 30 min de Voz Neuronal Cloud + Exportar MP3
+    androidBannerId: "ca-app-pub-3940256099942544/6300978111",
+    androidRewardedId: "ca-app-pub-3940256099942544/5224354917",
+    webAdSenseClient: "ca-pub-0000000000000000",
+    rewardMinutesPerAd: 30,
   };
 
   const STORAGE_KEYS = {
@@ -72,13 +66,13 @@ window.VoxAdManager = (function () {
 
     const mins = getRemainingPassMinutes();
     if (mins > 0) {
-      badge.textContent = `⚡ Pase Neuronal & MP3: ${mins} min activos`;
+      badge.textContent = `MP3 activo (${mins} min)`;
       badge.classList.add("pass-active");
-      if (btnUnlock) btnUnlock.textContent = "+30 min (Ver Anuncio)";
+      if (btnUnlock) btnUnlock.textContent = "+30 min";
     } else {
-      badge.textContent = "🔒 Voz Neuronal & MP3 (Desbloquear con Anuncio)";
+      badge.textContent = "Exportación MP3";
       badge.classList.remove("pass-active");
-      if (btnUnlock) btnUnlock.textContent = "🎁 Desbloquear Gratis (Anuncio)";
+      if (btnUnlock) btnUnlock.textContent = "Activar MP3 (30m)";
     }
   }
 
@@ -126,10 +120,6 @@ window.VoxAdManager = (function () {
     });
   }
 
-  /**
-   * Solicita mostrar un Anuncio Recompensado (Rewarded Ad) en AdMob o en el reproductor patrocinado web.
-   * Al completarse, otorga 30 minutos de Voz Neuronal Cloud + permiso de Exportación MP3.
-   */
   async function requestRewardedUnlock(onSuccess) {
     if (isCapacitorAdMobAvailable()) {
       try {
@@ -149,7 +139,6 @@ window.VoxAdManager = (function () {
       }
     }
 
-    // Flujo interactivo de Anuncio Recompensado en Web / Previsualización
     openWebRewardedAdModal(onSuccess);
   }
 
@@ -182,7 +171,7 @@ window.VoxAdManager = (function () {
 
       if (remaining <= 0) {
         clearInterval(countdownInterval);
-        timerSpan.textContent = "¡Recompensa lista!";
+        timerSpan.textContent = "Listo";
         btnClaim.disabled = false;
         btnClaim.focus();
       } else {
