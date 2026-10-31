@@ -1,7 +1,7 @@
 /**
  * VoxPDF Studio - Frontend Controller (Stitch Kinetic Precision Design System)
  * Arquitectura Híbrida: Python FastAPI + PyMuPDF + Edge-TTS / Modo Web Live PDF.js
- * Navegación libre desacoplada: lectura continua en segundo plano sin scroll ni saltos forzados.
+ * Sincronización total entre Audio, Capítulos y Páginas sin saltos de scroll ni cambios de vista forzados.
  * Desarrollado por Edgar López.
  */
 
@@ -16,9 +16,8 @@ const state = {
   rawFile: null,
   pdfJsDoc: null,
   pdfRenderTask: null,
-  currentPage: 1, // Página que el usuario está visualizando actualmente
-  playingPage: 1, // Página donde va la narración de audio actual
-  playingSentenceIdx: 0, // Oración actual dentro de playingPage
+  currentPage: 1,
+  currentSentenceIdx: 0,
   isPlaying: false,
   selectedVoice: "es-MX-DaliaNeural",
   playbackSpeed: 1.0,
@@ -235,9 +234,9 @@ function setupEventListeners() {
     });
   });
 
-  // Botones de cambio de página: cambian libremente la página visualizada sin cortar ni forzar el audio
-  dom.btnPrevPageTop.addEventListener("click", () => viewPage(state.currentPage - 1));
-  dom.btnNextPageTop.addEventListener("click", () => viewPage(state.currentPage + 1));
+  // Cambio de página unido al audio (sin hacer scroll ni mover la pantalla del usuario)
+  dom.btnPrevPageTop.addEventListener("click", () => goToPage(state.currentPage - 1, 0, state.isPlaying));
+  dom.btnNextPageTop.addEventListener("click", () => goToPage(state.currentPage + 1, 0, state.isPlaying));
 
   dom.btnPlayPause.addEventListener("click", () => togglePlayPause());
   dom.btnPrevSentence.addEventListener("click", () => stepSentence(-1));
@@ -296,7 +295,7 @@ function setupEventListeners() {
     });
   }
 
-  // Stitch Mobile Bottom Navigation Switching (< 1024px) — solo bajo acción explícita del usuario
+  // Stitch Mobile Bottom Navigation Switching (< 1024px) — solo cuando el usuario toca la barra inferior
   document.querySelectorAll(".mobile-nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       switchMobileScreen(btn.dataset.mobilePanel);
@@ -494,8 +493,8 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
 
   renderChaptersAndPages();
 
-  const targetPage = keepPosition ? Math.min(state.playingPage, parsed.total_pages) : 1;
-  const targetSentence = keepPosition ? state.playingSentenceIdx : 0;
+  const targetPage = keepPosition ? Math.min(state.currentPage, parsed.total_pages) : 1;
+  const targetSentence = keepPosition ? state.currentSentenceIdx : 0;
   await goToPage(targetPage, targetSentence, false);
 
   if (!keepPosition) {
@@ -546,25 +545,16 @@ function renderChaptersAndPages() {
         </div>
       </div>
       <div class="flex items-center gap-1 flex-shrink-0">
-        <button type="button" title="Reproducir desde este capítulo" class="chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center active:scale-90 transition-transform">
+        <button type="button" title="Reproducir capítulo" class="chapter-play-btn w-9 h-9 rounded-lg bg-surface-container-high text-on-surface flex items-center justify-center active:scale-90 transition-transform">
           <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
         </button>
       </div>
     `;
 
-    // Clic en la fila del capítulo: solo muestra esa página sin cortar el audio ni cambiar de pestaña forzosamente
+    // Selección de capítulo unida al audio, sin cambiar de pantalla ni hacer scroll forzado
     li.addEventListener("click", () => {
-      viewPage(ch.page_number);
+      goToPage(ch.page_number, 0, true);
     });
-
-    // Clic en el botón Play del capítulo: inicia la narración en ese capítulo sin forzar scroll ni cambiar de pestaña
-    const playBtn = li.querySelector(".chapter-play-btn");
-    if (playBtn) {
-      playBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        goToPage(ch.page_number, 0, true);
-      });
-    }
 
     dom.chapterList.appendChild(li);
   });
@@ -578,88 +568,57 @@ function renderChaptersAndPages() {
     btn.dataset.page = p;
     btn.textContent = p;
     btn.addEventListener("click", () => {
-      viewPage(p);
+      goToPage(p, 0, state.isPlaying);
     });
     dom.pageGrid.appendChild(btn);
   }
 }
 
 /**
- * Cambia libremente la página visualizada (PDF + Guion) sin interrumpir la reproducción activa
- * ni mover el scroll de la pantalla. Si el reproductor está en pausa, sincroniza la página inicial.
- */
-async function viewPage(pageNumber) {
-  if (!state.docData) return;
-  const total = state.docData.total_pages;
-  const clampedPage = Math.max(1, Math.min(total, pageNumber));
-
-  state.currentPage = clampedPage;
-
-  if (!state.isPlaying) {
-    state.playingPage = clampedPage;
-    state.playingSentenceIdx = 0;
-  }
-
-  updateViewedPageUI();
-  const pageObj = state.docData.pages[clampedPage - 1];
-  renderPageScript(pageObj);
-  await renderPdfPageCanvas(clampedPage);
-  highlightActiveSentence();
-}
-
-/**
- * Posiciona tanto la vista como el cursor de narración en una página y oración específicas
- * (sin mover el scroll de la ventana ni cambiar pestañas).
+ * Cambia de página y sincroniza capítulo/audio manteniendo intacta la posición de scroll
+ * de la ventana para no enviar forzosamente al usuario a otra parte de la pantalla.
  */
 async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   if (!state.docData) return;
+  const savedWindowScrollY = window.scrollY;
   const total = state.docData.total_pages;
   const clampedPage = Math.max(1, Math.min(total, pageNumber));
 
+  const pageChanged = state.currentPage !== clampedPage || dom.sentencesContainer.children.length === 0;
   state.currentPage = clampedPage;
-  state.playingPage = clampedPage;
 
   const pageObj = state.docData.pages[clampedPage - 1];
   const sentences = pageObj?.sentences || [];
-  state.playingSentenceIdx = Math.max(0, Math.min(Math.max(0, sentences.length - 1), sentenceIndex));
+  state.currentSentenceIdx = Math.max(0, Math.min(Math.max(0, sentences.length - 1), sentenceIndex));
 
-  updateViewedPageUI();
-  renderPageScript(pageObj);
-  await renderPdfPageCanvas(clampedPage);
+  dom.currentPageLabel.textContent = clampedPage;
+  dom.btnPrevPageTop.disabled = clampedPage <= 1;
+  dom.btnNextPageTop.disabled = clampedPage >= total;
+
+  // Actualizar cuadrícula de páginas
+  document.querySelectorAll(".page-pill").forEach((el) => {
+    const isCurrent = parseInt(el.dataset.page, 10) === clampedPage;
+    el.className = isCurrent
+      ? "page-pill py-2.5 rounded-lg bg-primary-container text-on-primary font-label-md text-label-md font-bold shadow-[0_0_12px_rgba(0,240,255,0.3)]"
+      : "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
+  });
+
+  if (pageChanged) {
+    renderPageScript(pageObj);
+    await renderPdfPageCanvas(clampedPage);
+  }
+
   highlightActiveSentence();
   saveReadingProgress();
+
+  // Restaurar cualquier desplazamiento involuntario del navegador al actualizar el DOM
+  if (Math.abs(window.scrollY - savedWindowScrollY) > 2) {
+    window.scrollTo({ top: savedWindowScrollY, behavior: "instant" });
+  }
 
   if (autoPlay) {
     playCurrentSentence();
   }
-}
-
-function updateViewedPageUI() {
-  if (!state.docData) return;
-  const total = state.docData.total_pages;
-  const viewed = state.currentPage;
-
-  dom.currentPageLabel.textContent = viewed;
-  dom.btnPrevPageTop.disabled = viewed <= 1;
-  dom.btnNextPageTop.disabled = viewed >= total;
-
-  // Actualizar cuadrícula de páginas (destaca la página vista y marca si otra página está sonando)
-  document.querySelectorAll(".page-pill").forEach((el) => {
-    const p = parseInt(el.dataset.page, 10);
-    const isViewed = p === viewed;
-    const isPlayingHere = state.isPlaying && p === state.playingPage;
-
-    if (isViewed) {
-      el.className =
-        "page-pill py-2.5 rounded-lg bg-primary-container text-on-primary font-label-md text-label-md font-bold shadow-[0_0_12px_rgba(0,240,255,0.3)]";
-    } else if (isPlayingHere) {
-      el.className =
-        "page-pill py-2.5 rounded-lg bg-secondary-container/60 border border-primary-container/60 text-primary font-label-md text-label-md font-semibold";
-    } else {
-      el.className =
-        "page-pill py-2.5 rounded-lg bg-surface-container-low border border-white/5 text-on-surface font-label-md text-label-md hover:bg-surface-container-high transition-all";
-    }
-  });
 }
 
 function renderPageScript(pageObj) {
@@ -680,8 +639,7 @@ function renderPageScript(pageObj) {
     card.id = `sentence-node-${s.sentence_index}`;
     card.dataset.sentenceIndex = s.sentence_index;
     card.addEventListener("click", () => {
-      state.playingPage = state.currentPage;
-      state.playingSentenceIdx = s.sentence_index;
+      state.currentSentenceIdx = s.sentence_index;
       highlightActiveSentence();
       saveReadingProgress();
       playCurrentSentence();
@@ -692,23 +650,17 @@ function renderPageScript(pageObj) {
 
 function highlightActiveSentence() {
   if (!state.docData) return;
+  const pageObj = state.docData.pages?.[state.currentPage - 1];
+  const sentences = pageObj?.sentences || [];
+  const totalInPage = sentences.length;
+  const idx = state.currentSentenceIdx;
 
-  const viewedPageObj = state.docData.pages?.[state.currentPage - 1];
-  const viewedSentences = viewedPageObj?.sentences || [];
-
-  const playingPageObj = state.docData.pages?.[state.playingPage - 1];
-  const playingSentences = playingPageObj?.sentences || [];
-  const totalInPlayingPage = playingSentences.length;
-  const playIdx = state.playingSentenceIdx;
-  const isViewingPlayingPage = state.currentPage === state.playingPage;
-
-  // 1. Actualizar tarjetas del guion en la página visualizada (sin hacer scrollIntoView)
-  viewedSentences.forEach((s, sIdx) => {
+  sentences.forEach((s, sIdx) => {
     const node = document.getElementById(`sentence-node-${sIdx}`);
     if (!node) return;
     const numTag = `#${String(sIdx + 1).padStart(2, "0")}`;
 
-    if (isViewingPlayingPage && sIdx === playIdx) {
+    if (sIdx === idx) {
       node.className =
         "relative p-3 rounded-lg bg-surface-container-highest/90 border border-primary-container/35 shadow-[0_0_28px_rgba(0,240,255,0.22)] flex flex-col gap-1.5 transition-all";
       node.innerHTML = `
@@ -717,7 +669,7 @@ function highlightActiveSentence() {
             <span class="material-symbols-outlined text-[13px] ${state.isPlaying ? "animate-spin" : ""}">sync</span>
             Now Speaking · ${numTag}
           </span>
-          <span class="font-label-sm text-label-sm text-primary-container font-mono">Pág. ${state.playingPage}</span>
+          <span class="font-label-sm text-label-sm text-primary-container font-mono">Pág. ${state.currentPage}</span>
         </div>
         <p class="font-body-md text-body-md text-primary font-medium tracking-normal leading-relaxed pl-2 border-l-2 border-primary-container bg-gradient-to-r from-primary-container/10 to-transparent py-1 rounded">
           ${s.text}
@@ -727,7 +679,7 @@ function highlightActiveSentence() {
           <span>Speed: ${state.playbackSpeed}x • Voice: ${state.selectedVoice}</span>
         </div>
       `;
-    } else if (state.currentPage < state.playingPage || (isViewingPlayingPage && sIdx < playIdx)) {
+    } else if (sIdx < idx) {
       node.className =
         "p-2.5 rounded-lg bg-surface-container/60 opacity-60 flex items-start gap-2.5 cursor-pointer hover:opacity-90 transition-all";
       node.innerHTML = `
@@ -744,21 +696,19 @@ function highlightActiveSentence() {
     }
   });
 
-  // 2. Actualizar telemetría de reproducción (barra inferior y DAW preview) según donde va la voz
-  const currentSentenceObj = playingSentences[playIdx];
+  // Nota: No llamamos a scrollIntoView() para que el usuario tenga total libertad en la pantalla.
+
+  const currentSentenceObj = sentences[idx];
   if (currentSentenceObj) {
     dom.nowPlayingSentence.textContent = currentSentenceObj.text;
-    dom.sentenceCounterLabel.textContent = isViewingPlayingPage
-      ? `Oración ${playIdx + 1} de ${totalInPlayingPage}`
-      : `Viendo Pág. ${state.currentPage} · Audio en Pág. ${state.playingPage} (${playIdx + 1}/${totalInPlayingPage})`;
-
+    dom.sentenceCounterLabel.textContent = `Oración ${idx + 1} de ${totalInPage}`;
     if (dom.activeParaBadge) {
-      dom.activeParaBadge.textContent = `Pág. ${state.playingPage} · Párrafo ${currentSentenceObj.paragraph_index + 1}`;
+      dom.activeParaBadge.textContent = `Pág. ${state.currentPage} · Párrafo ${currentSentenceObj.paragraph_index + 1}`;
     }
     if (dom.activeParaPreviewText) {
       dom.activeParaPreviewText.textContent = currentSentenceObj.text;
     }
-    const pagePct = totalInPlayingPage > 0 ? Math.round(((playIdx + 1) / totalInPlayingPage) * 100) : 0;
+    const pagePct = totalInPage > 0 ? Math.round(((idx + 1) / totalInPage) * 100) : 0;
     dom.pageProgressFill.style.width = `${pagePct}%`;
   } else {
     dom.nowPlayingSentence.textContent = "Página sin texto.";
@@ -766,12 +716,12 @@ function highlightActiveSentence() {
     dom.pageProgressFill.style.width = "0%";
   }
 
-  // 3. Actualizar progreso global del libro y capítulos en tiempo real
+  // Actualizar progreso global y capítulo activo sincronizado con la lectura
   let readBeforePage = 0;
-  for (let i = 0; i < state.playingPage - 1; i++) {
+  for (let i = 0; i < state.currentPage - 1; i++) {
     readBeforePage += state.docData.pages[i]?.sentences?.length || 0;
   }
-  const globalIdx = readBeforePage + playIdx + 1;
+  const globalIdx = readBeforePage + idx + 1;
   const globalTotal = Math.max(1, state.docData.total_sentences);
   const bookPct = Math.min(100, Math.round((globalIdx / globalTotal) * 100));
   dom.bookProgressPct.textContent = `${bookPct}%`;
@@ -782,13 +732,13 @@ function highlightActiveSentence() {
   let activeChapterPage = 1;
   let activeChapterTitle = state.docData.title;
   for (const ch of state.docData.chapters) {
-    if (ch.page_number <= state.playingPage) {
+    if (ch.page_number <= state.currentPage) {
       activeChapterPage = ch.page_number;
       activeChapterTitle = ch.title;
     }
   }
   if (dom.playerChapterLabel) {
-    dom.playerChapterLabel.textContent = `${activeChapterTitle} · Pág. ${state.playingPage}`;
+    dom.playerChapterLabel.textContent = `${activeChapterTitle} · Pág. ${state.currentPage}`;
   }
 
   document.querySelectorAll(".chapter-item").forEach((el) => {
@@ -802,12 +752,12 @@ function highlightActiveSentence() {
     const playBtn = el.querySelector(".chapter-play-btn");
 
     let chPct = 0;
-    if (state.playingPage > chEnd) {
+    if (state.currentPage > chEnd) {
       chPct = 100;
-    } else if (state.playingPage >= chStart && state.playingPage <= chEnd) {
+    } else if (state.currentPage >= chStart && state.currentPage <= chEnd) {
       const span = Math.max(1, chEnd - chStart + 1);
-      const pageProgress = totalInPlayingPage > 0 ? (playIdx + 1) / totalInPlayingPage : 0;
-      chPct = Math.min(100, Math.round((((state.playingPage - chStart) + pageProgress) / span) * 100));
+      const pageProgress = totalInPage > 0 ? (idx + 1) / totalInPage : 0;
+      chPct = Math.min(100, Math.round((((state.currentPage - chStart) + pageProgress) / span) * 100));
     }
 
     if (ringPath) {
@@ -827,7 +777,6 @@ function highlightActiveSentence() {
     }
   });
 
-  updateViewedPageUI();
   updatePdfHighlightBox();
 }
 
@@ -861,13 +810,8 @@ async function renderPdfPageCanvas(pageNumber) {
 }
 
 function updatePdfHighlightBox() {
-  if (state.currentPage !== state.playingPage) {
-    dom.pdfHighlightBox.classList.add("hidden");
-    return;
-  }
-
-  const pageObj = state.docData?.pages?.[state.playingPage - 1];
-  const currentSentence = pageObj?.sentences?.[state.playingSentenceIdx];
+  const pageObj = state.docData?.pages?.[state.currentPage - 1];
+  const currentSentence = pageObj?.sentences?.[state.currentSentenceIdx];
   if (!currentSentence || !currentSentence.bbox) {
     dom.pdfHighlightBox.classList.add("hidden");
     return;
@@ -939,15 +883,15 @@ function isBrowserSpeechSelected() {
 
 function prefetchNextSentence() {
   if (!state.docData || isBrowserSpeechSelected()) return;
-  const pageObj = state.docData.pages[state.playingPage - 1];
+  const pageObj = state.docData.pages[state.currentPage - 1];
   const sentences = pageObj?.sentences || [];
-  const nextIdx = state.playingSentenceIdx + 1;
+  const nextIdx = state.currentSentenceIdx + 1;
 
   if (nextIdx < sentences.length) {
     const nextText = sentences[nextIdx].text;
     fetchSentenceAudioBlobUrl(nextText).catch(() => {});
-  } else if (state.playingPage < state.docData.total_pages) {
-    const nextPageSentences = state.docData.pages[state.playingPage]?.sentences || [];
+  } else if (state.currentPage < state.docData.total_pages) {
+    const nextPageSentences = state.docData.pages[state.currentPage]?.sentences || [];
     if (nextPageSentences.length > 0) {
       fetchSentenceAudioBlobUrl(nextPageSentences[0].text).catch(() => {});
     }
@@ -956,19 +900,19 @@ function prefetchNextSentence() {
 
 async function playCurrentSentence() {
   if (!state.docData) return;
-  const pageObj = state.docData.pages[state.playingPage - 1];
+  const pageObj = state.docData.pages[state.currentPage - 1];
   const sentences = pageObj?.sentences || [];
 
   if (sentences.length === 0) {
-    if (state.playingPage < state.docData.total_pages) {
-      await advancePlayingPage(state.playingPage + 1, 0, true);
+    if (state.currentPage < state.docData.total_pages) {
+      await goToPage(state.currentPage + 1, 0, true);
     } else {
       stopPlayback();
     }
     return;
   }
 
-  const currentSentence = sentences[state.playingSentenceIdx];
+  const currentSentence = sentences[state.currentSentenceIdx];
   if (!currentSentence) return;
 
   const sessionId = ++state.playSessionId;
@@ -1031,46 +975,16 @@ function playWithBrowserSpeech(text, sessionId) {
   window.speechSynthesis.speak(utter);
 }
 
-/**
- * Avanza la página de reproducción en segundo plano. Si el usuario estaba en la misma
- * página que se leía, actualiza el contenido en sitio sin mover el scroll; si el usuario
- * estaba explorando otra página, mantiene su vista intacta.
- */
-async function advancePlayingPage(newPlayingPage, newSentenceIdx = 0, autoPlay = true) {
-  if (!state.docData) return;
-  const total = state.docData.total_pages;
-  const clamped = Math.max(1, Math.min(total, newPlayingPage));
-  const wasViewingSamePage = state.currentPage === state.playingPage;
-
-  state.playingPage = clamped;
-  const pageObj = state.docData.pages[clamped - 1];
-  const sentences = pageObj?.sentences || [];
-  state.playingSentenceIdx = Math.max(0, Math.min(Math.max(0, sentences.length - 1), newSentenceIdx));
-
-  if (wasViewingSamePage) {
-    state.currentPage = clamped;
-    renderPageScript(pageObj);
-    await renderPdfPageCanvas(clamped);
-  }
-
-  highlightActiveSentence();
-  saveReadingProgress();
-
-  if (autoPlay) {
-    await playCurrentSentence();
-  }
-}
-
 async function advanceToNextSentenceAuto() {
   if (!state.docData) return;
-  const pageObj = state.docData.pages[state.playingPage - 1];
+  const pageObj = state.docData.pages[state.currentPage - 1];
   const sentences = pageObj?.sentences || [];
 
-  if (state.playingSentenceIdx + 1 < sentences.length) {
-    state.playingSentenceIdx++;
+  if (state.currentSentenceIdx + 1 < sentences.length) {
+    state.currentSentenceIdx++;
     await playCurrentSentence();
-  } else if (state.playingPage < state.docData.total_pages) {
-    await advancePlayingPage(state.playingPage + 1, 0, true);
+  } else if (state.currentPage < state.docData.total_pages) {
+    await goToPage(state.currentPage + 1, 0, true);
   } else {
     stopPlayback();
     dom.nowPlayingSentence.textContent = "🎉 ¡Has terminado de escuchar el documento!";
@@ -1080,21 +994,21 @@ async function advanceToNextSentenceAuto() {
 async function stepSentence(delta) {
   if (!state.docData) return;
   const wasPlaying = state.isPlaying;
-  const pageObj = state.docData.pages[state.playingPage - 1];
+  const pageObj = state.docData.pages[state.currentPage - 1];
   const sentences = pageObj?.sentences || [];
-  const nextIdx = state.playingSentenceIdx + delta;
+  const nextIdx = state.currentSentenceIdx + delta;
 
   if (nextIdx >= 0 && nextIdx < sentences.length) {
-    state.playingSentenceIdx = nextIdx;
+    state.currentSentenceIdx = nextIdx;
     highlightActiveSentence();
     saveReadingProgress();
     if (wasPlaying) playCurrentSentence();
-  } else if (nextIdx >= sentences.length && state.playingPage < state.docData.total_pages) {
-    await advancePlayingPage(state.playingPage + 1, 0, wasPlaying);
-  } else if (nextIdx < 0 && state.playingPage > 1) {
-    const prevPageSentences = state.docData.pages[state.playingPage - 2]?.sentences || [];
+  } else if (nextIdx >= sentences.length && state.currentPage < state.docData.total_pages) {
+    await goToPage(state.currentPage + 1, 0, wasPlaying);
+  } else if (nextIdx < 0 && state.currentPage > 1) {
+    const prevPageSentences = state.docData.pages[state.currentPage - 2]?.sentences || [];
     const lastIdx = Math.max(0, prevPageSentences.length - 1);
-    await advancePlayingPage(state.playingPage - 1, lastIdx, wasPlaying);
+    await goToPage(state.currentPage - 1, lastIdx, wasPlaying);
   }
 }
 
@@ -1106,8 +1020,8 @@ function saveReadingProgress() {
   if (!state.docData) return;
   const payload = {
     doc_id: state.docData.doc_id,
-    page: state.playingPage,
-    sentence: state.playingSentenceIdx,
+    page: state.currentPage,
+    sentence: state.currentSentenceIdx,
     voice: state.selectedVoice,
     speed: state.playbackSpeed,
     updatedAt: new Date().toISOString(),
