@@ -76,7 +76,7 @@ def test_api_endpoints_and_production_compliance():
     assert voices.status_code == 200
     assert len(voices.json()["voices"]) >= 6
 
-    for route in ["/", "/privacy.html", "/ads.txt", "/app-ads.txt", "/manifest.webmanifest", "/ads.js"]:
+    for route in ["/", "/privacy.html", "/ads.txt", "/app-ads.txt", "/manifest.webmanifest", "/ads.js", "/icon.svg", "/icon-192.png"]:
         res = client.get(route)
         assert res.status_code == 200, f"Fallo en ruta {route}"
 

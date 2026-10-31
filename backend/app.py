@@ -242,3 +242,18 @@ async def serve_manifest() -> FileResponse:
 @app.get("/sw.js")
 async def serve_sw() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "sw.js"), media_type="application/javascript")
+
+
+@app.get("/icon.svg")
+async def serve_icon_svg() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "icon.svg"), media_type="image/svg+xml")
+
+
+@app.get("/icon-192.png")
+async def serve_icon_192() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "icon-192.png"), media_type="image/png")
+
+
+@app.get("/icon-512.png")
+async def serve_icon_512() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "icon-512.png"), media_type="image/png")

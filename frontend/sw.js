@@ -1,4 +1,4 @@
-const CACHE_NAME = "voxpdf-studio-v1";
+const CACHE_NAME = "voxpdf-studio-v2";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -6,7 +6,10 @@ const STATIC_ASSETS = [
   "./app.js",
   "./ads.js",
   "./privacy.html",
-  "./manifest.webmanifest"
+  "./manifest.webmanifest",
+  "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {

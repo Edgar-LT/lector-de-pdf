@@ -13,6 +13,7 @@ const LOCAL_DB_NAME = "voxpdf_local_db";
 const LOCAL_DB_VERSION = 1;
 const LOCAL_STORE_NAME = "documents";
 const ACTIVE_DOC_KEY = "last_opened_pdf";
+const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 const state = {
   backendAvailable: true,
@@ -27,6 +28,8 @@ const state = {
   playbackSpeed: 1.0,
   audioBlobCache: new Map(),
   playSessionId: 0,
+  wakeLock: null,
+  speechKeepAliveInterval: null,
 };
 
 const dom = {
@@ -83,6 +86,7 @@ const dom = {
   voiceSelect: document.getElementById("voiceSelect"),
   speedSelect: document.getElementById("speedSelect"),
   neuralAudioPlayer: document.getElementById("neuralAudioPlayer"),
+  bgKeepAliveAudio: document.getElementById("bgKeepAliveAudio"),
 
   // Banner progreso guardado
   resumeBanner: document.getElementById("resumeBanner"),
@@ -105,6 +109,7 @@ const dom = {
 
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
+  setupMediaSession();
   await detectEnvironmentAndVoices();
   if (window.VoxAdManager) {
     window.VoxAdManager.init();
@@ -251,6 +256,13 @@ async function closeCurrentDocument() {
   dom.btnPrevSentence.disabled = true;
   dom.btnNextSentence.disabled = true;
   dom.btnOpenExportModal.disabled = true;
+
+  if ("mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+    } catch (_) {}
+  }
 }
 
 /* ==========================================================================
@@ -865,6 +877,7 @@ function highlightActiveSentence() {
   });
 
   updatePdfHighlightBox();
+  updateMediaSession();
 }
 
 async function renderPdfPageCanvas(pageNumber) {
@@ -912,6 +925,94 @@ function updatePdfHighlightBox() {
   dom.pdfHighlightBox.style.height = `${((y1 - y0) * 100).toFixed(2)}%`;
 }
 
+function setupMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+
+  const actions = [
+    ["play", () => { if (!state.isPlaying) playCurrentSentence(); }],
+    ["pause", () => { if (state.isPlaying) stopPlayback(); }],
+    ["previoustrack", () => stepSentence(-1)],
+    ["nexttrack", () => stepSentence(1)],
+    ["seekbackward", () => stepSentence(-1)],
+    ["seekforward", () => stepSentence(1)],
+    ["stop", () => stopPlayback()],
+  ];
+
+  for (const [action, handler] of actions) {
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch (_) {}
+  }
+}
+
+function updateMediaSession() {
+  if (!("mediaSession" in navigator) || !state.docData) return;
+
+  const pageObj = state.docData.pages?.[state.currentPage - 1];
+  const currentSentence = pageObj?.sentences?.[state.currentSentenceIdx];
+  const sentenceText = currentSentence?.text || state.docData.title || "Lectura en curso";
+
+  let activeChapterTitle = state.docData.title;
+  for (const ch of state.docData.chapters) {
+    if (ch.page_number <= state.currentPage) {
+      activeChapterTitle = ch.title;
+    }
+  }
+
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: sentenceText,
+      artist: `${activeChapterTitle} · Pág. ${state.currentPage}/${state.docData.total_pages}`,
+      album: state.docData.title,
+      artwork: [
+        { src: "./icon-192.png", sizes: "192x192", type: "image/png" },
+        { src: "./icon-512.png", sizes: "512x512", type: "image/png" },
+        { src: "./icon.svg", sizes: "512x512", type: "image/svg+xml" },
+      ],
+    });
+    navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+  } catch (_) {}
+}
+
+function startBackgroundAudioAnchor() {
+  if (!dom.bgKeepAliveAudio) return;
+  try {
+    if (!dom.bgKeepAliveAudio.src) {
+      dom.bgKeepAliveAudio.src = SILENT_AUDIO_URI;
+      dom.bgKeepAliveAudio.volume = 0.001;
+    }
+    const p = dom.bgKeepAliveAudio.play();
+    if (p !== undefined) {
+      p.catch(() => {});
+    }
+  } catch (_) {}
+}
+
+function stopBackgroundAudioAnchor() {
+  if (!dom.bgKeepAliveAudio) return;
+  try {
+    dom.bgKeepAliveAudio.pause();
+  } catch (_) {}
+}
+
+async function requestWakeLock() {
+  if ("wakeLock" in navigator && !state.wakeLock) {
+    try {
+      state.wakeLock = await navigator.wakeLock.request("screen");
+      state.wakeLock.addEventListener("release", () => {
+        state.wakeLock = null;
+      });
+    } catch (_) {}
+  }
+}
+
+function releaseWakeLock() {
+  if (state.wakeLock) {
+    state.wakeLock.release().catch(() => {});
+    state.wakeLock = null;
+  }
+}
+
 function togglePlayPause() {
   if (!state.docData) return;
   if (state.isPlaying) {
@@ -925,17 +1026,32 @@ function stopPlayback() {
   state.isPlaying = false;
   state.playSessionId++;
   dom.neuralAudioPlayer.pause();
+  stopBackgroundAudioAnchor();
+  releaseWakeLock();
+
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
+  if (state.speechKeepAliveInterval) {
+    clearInterval(state.speechKeepAliveInterval);
+    state.speechKeepAliveInterval = null;
+  }
+
   updatePlayButtonUI(false);
   highlightActiveSentence();
+  updateMediaSession();
 }
 
 function updatePlayButtonUI(playing) {
   dom.iconPlay.classList.toggle("hidden", playing);
   dom.iconPause.classList.toggle("hidden", !playing);
   dom.audioVisualizer.classList.toggle("playing", playing);
+
+  if ("mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    } catch (_) {}
+  }
 }
 
 async function fetchSentenceAudioBlobUrl(text) {
@@ -972,15 +1088,22 @@ function prefetchNextSentence() {
   if (!state.docData || isBrowserSpeechSelected()) return;
   const pageObj = state.docData.pages[state.currentPage - 1];
   const sentences = pageObj?.sentences || [];
-  const nextIdx = state.currentSentenceIdx + 1;
 
-  if (nextIdx < sentences.length) {
-    const nextText = sentences[nextIdx].text;
-    fetchSentenceAudioBlobUrl(nextText).catch(() => {});
-  } else if (state.currentPage < state.docData.total_pages) {
-    const nextPageSentences = state.docData.pages[state.currentPage]?.sentences || [];
-    if (nextPageSentences.length > 0) {
-      fetchSentenceAudioBlobUrl(nextPageSentences[0].text).catch(() => {});
+  // Pre-cargar hasta 2 oraciones para garantizar reproducción ininterrumpida con pantalla bloqueada
+  for (let offset = 1; offset <= 2; offset++) {
+    const targetIdx = state.currentSentenceIdx + offset;
+    if (targetIdx < sentences.length) {
+      const nextText = sentences[targetIdx].text;
+      fetchSentenceAudioBlobUrl(nextText).catch(() => {});
+    } else {
+      const nextPageIndex = state.currentPage; // índice base 0 de la página siguiente
+      if (nextPageIndex < state.docData.total_pages) {
+        const nextPageSentences = state.docData.pages[nextPageIndex]?.sentences || [];
+        const nextSentInNextPage = nextPageSentences[targetIdx - sentences.length];
+        if (nextSentInNextPage?.text) {
+          fetchSentenceAudioBlobUrl(nextSentInNextPage.text).catch(() => {});
+        }
+      }
     }
   }
 }
@@ -1004,8 +1127,11 @@ async function playCurrentSentence() {
 
   const sessionId = ++state.playSessionId;
   state.isPlaying = true;
+  startBackgroundAudioAnchor();
+  requestWakeLock();
   updatePlayButtonUI(true);
   highlightActiveSentence();
+  updateMediaSession();
   saveReadingProgress();
 
   prefetchNextSentence();
@@ -1040,6 +1166,11 @@ function playWithBrowserSpeech(text, sessionId) {
     return;
   }
   window.speechSynthesis.cancel();
+  if (state.speechKeepAliveInterval) {
+    clearInterval(state.speechKeepAliveInterval);
+    state.speechKeepAliveInterval = null;
+  }
+
   const utter = new SpeechSynthesisUtterance(text);
   utter.rate = state.playbackSpeed;
 
@@ -1055,10 +1186,31 @@ function playWithBrowserSpeech(text, sessionId) {
   }
 
   utter.onend = () => {
+    if (state.speechKeepAliveInterval) {
+      clearInterval(state.speechKeepAliveInterval);
+      state.speechKeepAliveInterval = null;
+    }
     if (sessionId === state.playSessionId && state.isPlaying) {
       advanceToNextSentenceAuto();
     }
   };
+
+  utter.onerror = (e) => {
+    if (state.speechKeepAliveInterval) {
+      clearInterval(state.speechKeepAliveInterval);
+      state.speechKeepAliveInterval = null;
+    }
+    console.warn("Speech synthesis notice:", e);
+  };
+
+  // Keep-alive para SpeechSynthesis en segundo plano (evita suspensión a los 15s)
+  state.speechKeepAliveInterval = setInterval(() => {
+    if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    }
+  }, 10000);
+
   window.speechSynthesis.speak(utter);
 }
 
