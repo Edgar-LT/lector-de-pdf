@@ -1,0 +1,29 @@
+# Entornos virtuales de Python
+.venv/
+venv/
+ENV/
+env/
+
+# Caché de Python y pruebas
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Caché local de síntesis de audio neuronal
+.tts_cache/
+samples/
+
+# Empaquetado y distribución
+build/
+dist/
+*.egg-info/
+
+# Sistema Operativo e IDEs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

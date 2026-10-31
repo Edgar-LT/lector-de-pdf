@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="VoxPDF Studio — Aplicación conversora de PDF a Audiolibro con limpieza inteligente de texto, seguimiento visual oración por oración y voces neuronales. Desarrollado por Edgar López." />
+  <meta name="author" content="Edgar López" />
+  <meta name="theme-color" content="#0b0f19" />
+  <title>VoxPDF Studio | Conversor de PDF a Audiolibro — Edgar López</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- PDF.js para renderizado visual de la página original -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- BARRA SUPERIOR -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" x2="12" y1="19" y2="22"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title-row">
+            <h1>VoxPDF Studio</h1>
+            <span class="portfolio-tag">Proyecto Portafolio · Mecatrónica &amp; Software</span>
+          </div>
+          <p class="brand-subtitle">Conversor de PDF a Audiolibro con Limpieza Inteligente y Voces Neuronales</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div id="engineBadge" class="engine-badge online" title="Conectado al servidor Python con PyMuPDF y Microsoft Edge Neural TTS">
+          <span class="status-dot"></span>
+          <span id="engineBadgeText">Motor Python Neuronal Activo</span>
+        </div>
+
+        <label for="pdfFileInput" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Abrir PDF
+        </label>
+        <input id="pdfFileInput" type="file" accept="application/pdf,.pdf" hidden />
+      </div>
+    </header>
+
+    <!-- BANNER DE REANUDAR PROGRESO GUARDADO -->
+    <div id="resumeBanner" class="resume-banner hidden">
+      <div class="resume-banner-info">
+        <span class="resume-icon">🔖</span>
+        <span id="resumeBannerText">Progreso encontrado para este documento.</span>
+      </div>
+      <div class="resume-banner-actions">
+        <button id="btnResumeConfirm" class="btn btn-xs btn-primary" type="button">Continuar donde me quedé</button>
+        <button id="btnResumeDismiss" class="btn btn-xs btn-ghost" type="button">Empezar desde el inicio</button>
+      </div>
+    </div>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="workspace">
+      <!-- PANEL IZQUIERDO: ÍNDICE, ESTADÍSTICAS Y LIMPIEZA -->
+      <aside class="sidebar">
+        <!-- Resumen del libro -->
+        <section class="panel-card">
+          <div class="panel-header">
+            <h2>Documento Activo</h2>
+            <span id="docDurationBadge" class="badge-mono">0 min</span>
+          </div>
+          <div id="docSummary" class="doc-summary">
+            <p class="doc-title" id="docTitleText">Sin documento cargado</p>
+            <p class="doc-meta" id="docMetaText">Selecciona o arrastra un archivo PDF para comenzar.</p>
+            <div class="stats-grid">
+              <div class="stat-box">
+                <span class="stat-label">Páginas</span>
+                <span class="stat-value" id="statPages">0</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Oraciones</span>
+                <span class="stat-value" id="statSentences">0</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Palabras</span>
+                <span class="stat-value" id="statWords">0</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Limpieza Inteligente de Texto -->
+        <section class="panel-card">
+          <div class="panel-header">
+            <h2>Limpieza Inteligente</h2>
+            <span class="badge-accent" id="cleanedBadge">Activa</span>
+          </div>
+          <div class="cleaning-controls">
+            <label class="toggle-row">
+              <input type="checkbox" id="chkRemoveHeaders" checked />
+              <span class="toggle-text">
+                <strong>Omitir encabezados y pies</strong>
+                <small>Filtra textos repetitivos en márgenes (<span id="countHeadersRemoved">0</span> omitidos)</small>
+              </span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chkRemovePageNums" checked />
+              <span class="toggle-text">
+                <strong>Omitir números de página</strong>
+                <small>Ignora numeración suelta (<span id="countPageNumsRemoved">0</span> omitidos)</small>
+              </span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chkFixLineBreaks" checked />
+              <span class="toggle-text">
+                <strong>Unir guiones y saltos cortados</strong>
+                <small>Reconstruye palabras y párrafos para lectura fluida</small>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <!-- Navegación por Capítulos y Páginas -->
+        <section class="panel-card sidebar-nav-card">
+          <div class="tabs-header">
+            <button class="tab-btn active" data-tab="chapters" type="button">Capítulos</button>
+            <button class="tab-btn" data-tab="pages" type="button">Páginas</button>
+          </div>
+
+          <div id="tabChapters" class="tab-content active">
+            <ul id="chapterList" class="chapter-list">
+              <li class="empty-hint">Los capítulos aparecerán aquí al cargar un PDF.</li>
+            </ul>
+          </div>
+
+          <div id="tabPages" class="tab-content">
+            <div id="pageGrid" class="page-grid"></div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- PANEL CENTRAL: VISOR DUAL (PDF + GUION INTERACTIVO) -->
+      <section class="stage">
+        <!-- Barra de herramientas del visor -->
+        <div class="stage-toolbar">
+          <div class="page-navigator">
+            <button id="btnPrevPageTop" class="icon-btn" title="Página anterior" type="button" disabled>◀</button>
+            <span class="page-indicator">
+              Página <strong id="currentPageLabel">0</strong> de <strong id="totalPagesLabel">0</strong>
+            </span>
+            <button id="btnNextPageTop" class="icon-btn" title="Página siguiente" type="button" disabled>▶</button>
+          </div>
+
+          <div class="view-mode-group" role="group" aria-label="Modo de visualización">
+            <button class="view-mode-btn active" data-view="split" type="button">Vista Dividida</button>
+            <button class="view-mode-btn" data-view="script" type="button">Modo Audiolibro</button>
+            <button class="view-mode-btn" data-view="pdf" type="button">Solo PDF</button>
+          </div>
+
+          <div class="reading-progress-pill">
+            <span>Progreso libro:</span>
+            <strong id="bookProgressPct">0%</strong>
+          </div>
+        </div>
+
+        <!-- Estado vacío / Drag & Drop -->
+        <div id="emptyStateDropzone" class="empty-dropzone">
+          <div class="dropzone-card">
+            <div class="dropzone-icon">🎧</div>
+            <h2>Convierte cualquier PDF en un Audiolibro Interactivo</h2>
+            <p>
+              Arrastra y suelta un archivo <strong>.PDF</strong> aquí o selecciónalo desde tu equipo para transformar la lectura en un audiolibro con voz neuronal.
+            </p>
+            <div class="dropzone-buttons">
+              <label for="pdfFileInput" class="btn btn-primary">Seleccionar archivo PDF</label>
+            </div>
+            <div class="feature-pills">
+              <span>✓ Voces Neuronales (es/en)</span>
+              <span>✓ Resaltado de oración en vivo</span>
+              <span>✓ Limpieza de encabezados y páginas</span>
+              <span>✓ Exportación directa a MP3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Contenedor Dual: PDF Canvas + Guion de Lectura -->
+        <div id="readerSplitContainer" class="reader-split view-split hidden">
+          <!-- Columna Izquierda: Vista de página PDF con resaltado de bloque -->
+          <div class="pdf-pane" id="pdfPane">
+            <div class="pane-title-bar">
+              <span>Vista Original del Documento</span>
+              <span class="pane-hint">El recuadro cian indica el párrafo en lectura</span>
+            </div>
+            <div class="pdf-canvas-Scroll">
+              <div class="pdf-canvas-wrapper" id="pdfCanvasWrapper">
+                <canvas id="pdfCanvas"></canvas>
+                <div id="pdfHighlightBox" class="pdf-highlight-box hidden"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Columna Derecha: Guion limpio con seguimiento oración por oración -->
+          <div class="script-pane" id="scriptPane">
+            <div class="pane-title-bar">
+              <span>Guion Limpio de Audiolibro</span>
+              <span class="pane-hint">Haz clic en cualquier oración para escuchar desde ahí</span>
+            </div>
+            <div id="sentencesContainer" class="sentences-container"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- BARRA INFERIOR: REPRODUCTOR DE AUDIOLIBRO -->
+    <footer class="player-bar">
+      <!-- Controles principales de transporte -->
+      <div class="player-transport">
+        <button id="btnPrevSentence" class="transport-btn" title="Oración anterior (Flecha Izquierda)" type="button" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="19 20 9 12 19 4 19 20"/>
+            <line x1="5" y1="19" x2="5" y2="5"/>
+          </svg>
+        </button>
+
+        <button id="btnPlayPause" class="play-btn" title="Reproducir / Pausar (Espacio)" type="button" disabled>
+          <svg id="iconPlay" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="6 4 20 12 6 20 6 4"/>
+          </svg>
+          <svg id="iconPause" class="hidden" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16"/>
+            <rect x="14" y="4" width="4" height="16"/>
+          </svg>
+        </button>
+
+        <button id="btnNextSentence" class="transport-btn" title="Oración siguiente (Flecha Derecha)" type="button" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 4 15 12 5 20 5 4"/>
+            <line x1="19" y1="5" x2="19" y2="19"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Estado de lectura actual y barra de progreso -->
+      <div class="player-NowPlaying">
+        <div class="now-playing-top">
+          <div class="audio-visualizer" id="audioVisualizer">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <span id="nowPlayingSentence" class="now-playing-text">Listo para reproducir...</span>
+          <span id="sentenceCounterLabel" class="sentence-counter">0 / 0</span>
+        </div>
+        <div class="progress-track" id="pageProgressBarTrack">
+          <div id="pageProgressFill" class="progress-fill" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <!-- Controles de Voz, Velocidad y Exportación MP3 -->
+      <div class="player-settings">
+        <div class="control-group">
+          <label for="voiceSelect">Voz Neuronal</label>
+          <select id="voiceSelect" class="select-input"></select>
+        </div>
+
+        <div class="control-group">
+          <label for="speedSelect">Velocidad</label>
+          <select id="speedSelect" class="select-input speed-select">
+            <option value="0.5">0.5x</option>
+            <option value="0.75">0.75x</option>
+            <option value="1.0" selected>1.0x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="1.75">1.75x</option>
+            <option value="2.0">2.0x</option>
+          </select>
+        </div>
+
+        <button id="btnOpenExportModal" class="btn btn-export" type="button" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Exportar MP3
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- MODAL DE EXPORTACIÓN A MP3 -->
+  <div id="exportModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="exportModalTitle">Exportar Audiolibro en MP3</h3>
+        <button id="btnCloseExportModal" class="icon-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Genera un archivo de audio <strong>.MP3</strong> con voz neuronal y el texto limpio (sin encabezados ni números de página).
+        </p>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="exportStartPage">Desde página</label>
+            <input id="exportStartPage" type="number" min="1" value="1" class="number-input" />
+          </div>
+          <div class="form-field">
+            <label for="exportEndPage">Hasta página</label>
+            <input id="exportEndPage" type="number" min="1" value="1" class="number-input" />
+          </div>
+        </div>
+        <div class="quick-range-btns">
+          <button id="btnRangeCurrentPage" class="btn btn-xs btn-secondary" type="button">Solo página actual</button>
+          <button id="btnRangeAllPages" class="btn btn-xs btn-secondary" type="button">Todo el documento</button>
+        </div>
+        <div id="exportStatusMsg" class="export-status hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelExport" class="btn btn-ghost" type="button">Cancelar</button>
+        <button id="btnConfirmExport" class="btn btn-primary" type="button">Generar y Descargar MP3</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="neuralAudioPlayer" preload="auto"></audio>
+  <script src="./app.js"></script>
+</body>
+</html>

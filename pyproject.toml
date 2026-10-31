@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voxpdf-studio"
+version = "1.0.0"
+description = "Conversor inteligente de PDF a Audiolibro con limpieza de texto por coordenadas, seguimiento visual y voces neuronales."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Edgar López", email = "Socialedgar0710@gmail.com" }
+]
+keywords = ["pdf", "audiobook", "tts", "edge-tts", "pymupdf", "fastapi", "portfolio"]
+dependencies = [
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.29.0",
+  "PyMuPDF>=1.24.0,<2.0.0",
+  "edge-tts>=6.1.12",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
