@@ -1,0 +1,15 @@
+{
+  "appId": "com.edgarlopez.voxpdf",
+  "appName": "VoxPDF Studio",
+  "webDir": "frontend",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "AdMob": {
+      "appIdAndroid": "ca-app-pub-3940256099942544~3347511713",
+      "initializeForTesting": true
+    }
+  }
+}

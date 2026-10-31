@@ -93,6 +93,12 @@ const dom = {
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
   await detectEnvironmentAndVoices();
+  if (window.VoxAdManager) {
+    window.VoxAdManager.init();
+  }
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
 });
 
 async function detectEnvironmentAndVoices() {
@@ -253,6 +259,26 @@ function setupEventListeners() {
     dom.exportEndPage.value = state.docData.total_pages;
   });
   dom.btnConfirmExport.addEventListener("click", handleExportMp3);
+
+  // Botón de desbloqueo de Pase Neuronal / MP3 mediante Anuncio Recompensado
+  const btnWatchAdUnlock = document.getElementById("btnWatchAdUnlock");
+  if (btnWatchAdUnlock && window.VoxAdManager) {
+    btnWatchAdUnlock.addEventListener("click", () => {
+      window.VoxAdManager.requestRewardedUnlock();
+    });
+  }
+
+  // Navegación inferior móvil (App Android / Pantallas táctiles)
+  const workspaceEl = document.querySelector(".workspace");
+  document.querySelectorAll(".mobile-nav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".mobile-nav-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      if (workspaceEl) {
+        workspaceEl.classList.toggle("mobile-show-sidebar", btn.dataset.mobilePanel === "sidebar");
+      }
+    });
+  });
 }
 
 async function handleUploadFile(file, keepPosition = false) {
@@ -845,6 +871,12 @@ function checkSavedProgress(docId) {
 
 function openExportModal() {
   if (!state.docData) return;
+  if (window.VoxAdManager && !window.VoxAdManager.hasNeuralPassActive()) {
+    window.VoxAdManager.requestRewardedUnlock(() => {
+      openExportModal();
+    });
+    return;
+  }
   dom.exportStartPage.max = state.docData.total_pages;
   dom.exportEndPage.max = state.docData.total_pages;
   dom.exportStartPage.value = state.currentPage;

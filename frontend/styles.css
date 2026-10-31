@@ -970,3 +970,176 @@ html, body {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+
+/* ==========================================================================
+   MONETIZACIÓN POR ANUNCIOS (ADMOB / ADSENSE) & ADAPTACIÓN MOBILE-FIRST
+   ========================================================================== */
+
+.reward-pass-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid var(--border-subtle);
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+.pass-badge {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  padding-left: 0.25rem;
+}
+
+.pass-badge.pass-active {
+  color: #6ee7b7;
+  font-weight: 600;
+}
+
+.btn-reward {
+  background: linear-gradient(135deg, var(--accent-amber), #d97706);
+  color: #0b0f19;
+  font-weight: 700;
+}
+
+.ad-banner-slot {
+  min-height: 74px;
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.75);
+  padding: 0.55rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  text-align: center;
+}
+
+.ad-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--accent-amber);
+}
+
+.ad-copy {
+  font-size: 0.73rem;
+  color: var(--text-secondary);
+}
+
+.ad-privacy-link {
+  font-size: 0.68rem;
+  color: var(--accent-cyan);
+  text-decoration: none;
+}
+
+.ad-showcase-box {
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.14), rgba(99, 102, 241, 0.14));
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+.consent-banner {
+  position: fixed;
+  bottom: 0.85rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(94vw, 760px);
+  background: rgba(15, 23, 42, 0.97);
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  z-index: 90;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+}
+
+.consent-banner a {
+  color: var(--accent-cyan);
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 0.6rem 0.85rem;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .workspace.mobile-show-sidebar .sidebar {
+    display: flex;
+  }
+
+  .workspace.mobile-show-sidebar .stage {
+    display: none;
+  }
+
+  .reader-split.view-split {
+    grid-template-columns: 1fr;
+  }
+
+  .player-bar {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+    padding: 0.65rem 0.85rem;
+  }
+
+  .player-transport {
+    justify-content: center;
+  }
+
+  .player-settings {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .mobile-bottom-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-subtle);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .mobile-nav-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.65rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .mobile-nav-btn.active {
+    color: var(--accent-cyan);
+    box-shadow: inset 0 2px 0 var(--accent-cyan);
+  }
+}

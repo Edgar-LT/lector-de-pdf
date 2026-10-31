@@ -4,13 +4,20 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from backend.config import settings
 from backend.pdf_processor import CleaningOptions, SmartPDFCleaner
+from backend.security import (
+    SecurityHeadersMiddleware,
+    SlidingWindowRateLimiter,
+    validate_pdf_bytes,
+)
 from backend.tts_engine import NeuralTTSEngine
 
 
@@ -18,23 +25,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 app = FastAPI(
-    title="VoxPDF Studio API",
-    description="Conversor inteligente de PDF a Audiolibro con Voces Neuronales y Limpieza de Texto",
-    version="1.0.0",
+    title="VoxPDF Studio Production API",
+    description="Conversor inteligente de PDF a Audiolibro con Voces Neuronales, Limpieza de Texto y Monetización",
+    version="1.2.0",
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 tts_engine = NeuralTTSEngine(cache_dir=BASE_DIR / ".tts_cache")
+rate_limiter = SlidingWindowRateLimiter(window_seconds=60)
 
-# Almacén en memoria del último documento procesado para exportación rápida
+# Almacén en memoria con límite de documentos recientes
 DOCUMENT_STORE: dict[str, dict[str, Any]] = {}
+MAX_STORED_DOCS = 25
 
 
 class SpeakRequest(BaseModel):
@@ -51,11 +62,17 @@ class ExportRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     custom_text: str | None = None
     book_title: str = "Audiolibro"
+    ad_reward_token: str | None = None
 
 
 @app.get("/api/health")
 async def health_check() -> dict[str, Any]:
-    return {"status": "ok", "engine": "edge-tts + PyMuPDF"}
+    return {
+        "status": "ok",
+        "version": "1.2.0",
+        "engine": "edge-tts + PyMuPDF",
+        "max_pdf_size_mb": settings.MAX_PDF_SIZE_MB,
+    }
 
 
 @app.get("/api/voices")
@@ -65,18 +82,20 @@ async def list_voices() -> dict[str, Any]:
 
 @app.post("/api/pdf/parse")
 async def parse_pdf(
+    request: Request,
     file: UploadFile = File(...),
     remove_headers_footers: bool = Form(True),
     remove_page_numbers: bool = Form(True),
     fix_line_breaks: bool = Form(True),
 ) -> dict[str, Any]:
+    rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
+
     filename = file.filename or "documento.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="El archivo debe ser un documento PDF (.pdf).")
 
     pdf_bytes = await file.read()
-    if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="El archivo PDF está vacío.")
+    validate_pdf_bytes(pdf_bytes, max_size_mb=settings.MAX_PDF_SIZE_MB)
 
     options = CleaningOptions(
         remove_headers_footers=remove_headers_footers,
@@ -89,17 +108,24 @@ async def parse_pdf(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"No se pudo procesar el PDF: {exc}") from exc
 
+    if len(DOCUMENT_STORE) >= MAX_STORED_DOCS:
+        oldest_key = next(iter(DOCUMENT_STORE))
+        DOCUMENT_STORE.pop(oldest_key, None)
+
     DOCUMENT_STORE[parsed["doc_id"]] = parsed
     return parsed
 
 
 @app.post("/api/tts/speak")
-async def speak_sentence(req: SpeakRequest) -> FileResponse:
+async def speak_sentence(request: Request, req: SpeakRequest) -> FileResponse:
+    rate_limiter.check(request, bucket="tts", max_requests=settings.RATE_LIMIT_TTS_PER_MIN)
+
     try:
         audio_path = await tts_engine.synthesize_to_file(
             text=req.text,
             voice=req.voice,
             speed=req.speed,
+            max_cache_files=settings.TTS_CACHE_MAX_FILES,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error al sintetizar audio neuronal: {exc}") from exc
@@ -112,7 +138,9 @@ async def speak_sentence(req: SpeakRequest) -> FileResponse:
 
 
 @app.post("/api/tts/export")
-async def export_audiobook(req: ExportRequest) -> FileResponse:
+async def export_audiobook(request: Request, req: ExportRequest) -> FileResponse:
+    rate_limiter.check(request, bucket="export", max_requests=settings.RATE_LIMIT_EXPORT_PER_MIN)
+
     safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", req.book_title).strip("_") or "Audiolibro"
 
     if req.custom_text and req.custom_text.strip():
@@ -121,6 +149,7 @@ async def export_audiobook(req: ExportRequest) -> FileResponse:
                 text=req.custom_text.strip(),
                 voice=req.voice,
                 speed=req.speed,
+                max_cache_files=settings.TTS_CACHE_MAX_FILES,
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Error al exportar audio: {exc}") from exc
@@ -181,3 +210,35 @@ async def serve_styles() -> FileResponse:
 async def serve_app_js() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "app.js"), media_type="application/javascript")
 
+
+@app.get("/ads.js")
+async def serve_ads_js() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "ads.js"), media_type="application/javascript")
+
+
+@app.get("/privacy.html")
+async def serve_privacy() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "privacy.html"))
+
+
+@app.get("/ads.txt")
+async def serve_ads_txt() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "ads.txt"), media_type="text/plain")
+
+
+@app.get("/app-ads.txt")
+async def serve_app_ads_txt() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "app-ads.txt"), media_type="text/plain")
+
+
+@app.get("/manifest.webmanifest")
+async def serve_manifest() -> FileResponse:
+    return FileResponse(
+        str(FRONTEND_DIR / "manifest.webmanifest"),
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/sw.js")
+async def serve_sw() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "sw.js"), media_type="application/javascript")

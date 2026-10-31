@@ -1,0 +1,3 @@
+# Archivo de verificación IAB Tech Lab para Google AdMob (Google Play Store)
+# Reemplaza pub-0000000000000000 con tu ID de editor real de AdMob
+google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0

@@ -97,11 +97,30 @@ class NeuralTTSEngine:
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
+    def prune_cache(self, max_files: int = 150) -> int:
+        """Elimina los archivos MP3 más antiguos cuando la caché supera max_files (evicción LRU)."""
+        if max_files <= 0 or not self.cache_dir.exists():
+            return 0
+        mp3_files = sorted(
+            self.cache_dir.glob("*.mp3"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        removed = 0
+        for old_file in mp3_files[max_files:]:
+            try:
+                old_file.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
     async def synthesize_to_file(
         self,
         text: str,
         voice: str = "es-MX-DaliaNeural",
         speed: float = 1.0,
+        max_cache_files: int = 150,
     ) -> Path:
         """Sintetiza un texto a archivo MP3 usando caché si ya fue generado."""
         cleaned_text = re.sub(r"\s*\n+\s*", " ", text.strip())
@@ -127,6 +146,7 @@ class NeuralTTSEngine:
                 )
                 await communicate.save(str(cache_path))
                 if cache_path.exists() and cache_path.stat().st_size > 128:
+                    self.prune_cache(max_files=max_cache_files)
                     return cache_path
             except Exception as exc:
                 last_exc = exc

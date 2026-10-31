@@ -12,6 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="manifest" href="./manifest.webmanifest" />
   <!-- PDF.js para renderizado visual de la página original -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
@@ -37,6 +38,11 @@
       </div>
 
       <div class="topbar-actions">
+        <div class="reward-pass-pill">
+          <span id="neuralPassStatus" class="pass-badge">🔒 Voz Neuronal &amp; MP3 (Desbloquear con Anuncio)</span>
+          <button id="btnWatchAdUnlock" class="btn btn-xs btn-reward" type="button">🎁 Desbloquear Gratis (Anuncio)</button>
+        </div>
+
         <div id="engineBadge" class="engine-badge online" title="Conectado al servidor Python con PyMuPDF y Microsoft Edge Neural TTS">
           <span class="status-dot"></span>
           <span id="engineBadgeText">Motor Python Neuronal Activo</span>
@@ -144,6 +150,13 @@
             <div id="pageGrid" class="page-grid"></div>
           </div>
         </section>
+
+        <!-- Espacio fijo no intrusivo para Banner AdMob / AdSense (Zero CLS) -->
+        <aside id="adBannerSlot" class="ad-banner-slot" aria-label="Espacio publicitario">
+          <span class="ad-tag">PUBLICIDAD · ADMOB / ADSENSE</span>
+          <p class="ad-copy">VoxPDF Studio es 100% gratuito gracias a nuestros patrocinadores.</p>
+          <a href="./privacy.html" class="ad-privacy-link">Privacidad y Términos</a>
+        </aside>
       </aside>
 
       <!-- PANEL CENTRAL: VISOR DUAL (PDF + GUION INTERACTIVO) -->
@@ -291,6 +304,46 @@
         </button>
       </div>
     </footer>
+    <!-- BARRA DE NAVEGACIÓN MÓVIL (ESTILO GOOGLE PLAY APP) -->
+    <nav class="mobile-bottom-nav" aria-label="Navegación móvil">
+      <button type="button" class="mobile-nav-btn active" data-mobile-panel="stage">📖 Lector &amp; Audio</button>
+      <button type="button" class="mobile-nav-btn" data-mobile-panel="sidebar">🗂️ Capítulos &amp; Limpieza</button>
+    </nav>
+  </div>
+
+  <!-- MODAL DE ANUNCIO RECOMPENSADO (REWARDED AD ADMOB / WEB) -->
+  <div id="rewardedAdModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="rewardedAdTitle">
+    <div class="modal-card ad-modal-card">
+      <div class="modal-header">
+        <span class="ad-tag">ANUNCIO PATROCINADO · REWARDED AD</span>
+        <span id="rewardedAdTimer" class="badge-mono">5s</span>
+      </div>
+      <div class="modal-body">
+        <h3 id="rewardedAdTitle" style="margin-bottom:0.45rem;">Desbloqueando Pase de Voz Neuronal &amp; Exportación MP3</h3>
+        <p class="modal-desc">
+          Mira este breve anuncio patrocinado para activar <strong>30 minutos de Voces Neuronales Cloud</strong> y <strong>descargas ilimitadas en formato .MP3</strong> sin costo.
+        </p>
+        <div class="ad-showcase-box">
+          <strong>⚡ VoxPDF Pro Cloud Engine</strong>
+          <span>Síntesis neuronal de alta fidelidad impulsada por Python &amp; FastAPI</span>
+        </div>
+        <div class="progress-track" style="margin-top:0.9rem;">
+          <div id="rewardedAdProgress" class="progress-fill" style="width: 0%"></div>
+        </div>
+      </div>
+      <div class="modal-footer" style="margin-top:1rem;">
+        <button id="btnCancelAdReward" class="btn btn-ghost" type="button">Cerrar</button>
+        <button id="btnClaimAdReward" class="btn btn-primary" type="button" disabled>🎁 Reclamar Recompensa (+30 min)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BANNER DE CONSENTIMIENTO GDPR / PRIVACIDAD -->
+  <div id="gdprConsentBanner" class="consent-banner hidden" role="region" aria-label="Consentimiento de privacidad">
+    <p>
+      Utilizamos cookies e identificadores publicitarios (Google AdMob / AdSense) para ofrecer <strong>VoxPDF Studio</strong> de forma gratuita. Al continuar aceptas nuestra <a href="./privacy.html">Política de Privacidad y Términos de Uso</a>.
+    </p>
+    <button id="btnAcceptConsent" class="btn btn-xs btn-primary" type="button">Aceptar y Continuar</button>
   </div>
 
   <!-- MODAL DE EXPORTACIÓN A MP3 -->
@@ -328,6 +381,7 @@
   </div>
 
   <audio id="neuralAudioPlayer" preload="auto"></audio>
+  <script src="./ads.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

@@ -5,8 +5,9 @@ from pathlib import Path
 import fitz
 from fastapi.testclient import TestClient
 
-from backend.app import app, tts_engine
+from backend.app import app, rate_limiter, tts_engine
 from backend.pdf_processor import CleaningOptions, SmartPDFCleaner
+from backend.tts_engine import NeuralTTSEngine
 
 
 client = TestClient(app)
@@ -62,24 +63,52 @@ def test_smart_pdf_cleaner_removes_headers_and_page_numbers(tmp_path):
     assert "Página 1 de 3" not in all_text
 
 
-def test_api_endpoints():
-    """Verifica los endpoints REST de salud, catálogo de voces y recursos estáticos."""
+def test_api_endpoints_and_production_compliance():
+    """Verifica endpoints REST, cabeceras de seguridad y archivos de monetización/cumplimiento."""
+    rate_limiter.reset()
     health = client.get("/api/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert health.headers.get("X-Content-Type-Options") == "nosniff"
+    assert health.headers.get("X-Frame-Options") == "SAMEORIGIN"
 
     voices = client.get("/api/voices")
     assert voices.status_code == 200
     assert len(voices.json()["voices"]) >= 6
 
-    index_res = client.get("/")
-    assert index_res.status_code == 200
+    for route in ["/", "/privacy.html", "/ads.txt", "/app-ads.txt", "/manifest.webmanifest", "/ads.js"]:
+        res = client.get(route)
+        assert res.status_code == 200, f"Fallo en ruta {route}"
+
+
+def test_production_security_pdf_validation_and_rate_limiter(tmp_path):
+    """Verifica el rechazo de archivos sin firma binaria %PDF-, el Rate Limiter y la purga LRU de caché."""
+    rate_limiter.reset()
+
+    # 1. Subir un archivo falso que termina en .pdf pero no tiene firma %PDF-
+    fake_pdf = b"ESTE NO ES UN ARCHIVO PDF REAL"
+    bad_res = client.post(
+        "/api/pdf/parse",
+        files={"file": ("falso.pdf", fake_pdf, "application/pdf")},
+    )
+    assert bad_res.status_code == 400
+    assert "firma binaria PDF" in bad_res.json()["detail"]
+
+    # 2. Verificar auto-purga de caché de audio (LRU)
+    temp_engine = NeuralTTSEngine(cache_dir=tmp_path / "cache_test")
+    for idx in range(5):
+        f = temp_engine.cache_dir / f"sample_{idx}.mp3"
+        f.write_bytes(b"ID3" + b"\x00" * 200)
+    removed = temp_engine.prune_cache(max_files=2)
+    assert removed == 3
+    assert len(list(temp_engine.cache_dir.glob("*.mp3"))) == 2
 
 
 def test_neural_tts_speak_and_export(tmp_path, monkeypatch):
     """Verifica el flujo completo de análisis PDF, síntesis de audio y exportación de audiolibro MP3."""
+    rate_limiter.reset()
     if os.environ.get("CI") == "true":
-        async def _mock_synth(text: str, voice: str = "es-MX-DaliaNeural", speed: float = 1.0) -> Path:
+        async def _mock_synth(text: str, voice: str = "es-MX-DaliaNeural", speed: float = 1.0, max_cache_files: int = 150) -> Path:
             dummy_mp3 = tmp_path / "mock_audio.mp3"
             dummy_mp3.write_bytes(b"ID3" + b"\x00" * 2048)
             return dummy_mp3
