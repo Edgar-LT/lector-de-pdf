@@ -1,6 +1,6 @@
 /**
  * VoxPDF — Controlador Frontend
- * Lector y conversor de PDF a voz con sincronización de páginas y capítulos.
+ * Lector y conversor de PDF a voz con persistencia local en IndexedDB y sincronización de páginas.
  * Desarrollado por Edgar López.
  */
 
@@ -8,6 +8,11 @@ if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc =
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
+
+const LOCAL_DB_NAME = "voxpdf_local_db";
+const LOCAL_DB_VERSION = 1;
+const LOCAL_STORE_NAME = "documents";
+const ACTIVE_DOC_KEY = "last_opened_pdf";
 
 const state = {
   backendAvailable: true,
@@ -40,6 +45,7 @@ const dom = {
   statPages: document.getElementById("statPages"),
   statSentences: document.getElementById("statSentences"),
   statWords: document.getElementById("statWords"),
+  btnClearSavedPdf: document.getElementById("btnClearSavedPdf"),
   chkRemoveHeaders: document.getElementById("chkRemoveHeaders"),
   chkRemovePageNums: document.getElementById("chkRemovePageNums"),
   chkFixLineBreaks: document.getElementById("chkFixLineBreaks"),
@@ -106,7 +112,150 @@ document.addEventListener("DOMContentLoaded", async () => {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
+  await restorePersistedPdfFromLocalDb();
 });
+
+/* ==========================================================================
+   PERSISTENCIA LOCAL DE ARCHIVOS PDF (IndexedDB)
+   Permite recordar el PDF cargado y su texto procesado entre sesiones
+   ========================================================================== */
+
+function openLocalPdfDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB no disponible"));
+      return;
+    }
+    const req = window.indexedDB.open(LOCAL_DB_NAME, LOCAL_DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(LOCAL_STORE_NAME)) {
+        db.createObjectStore(LOCAL_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function savePdfToLocalDb(file, arrayBuffer, parsed) {
+  try {
+    const db = await openLocalPdfDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(LOCAL_STORE_NAME, "readwrite");
+      const store = tx.objectStore(LOCAL_STORE_NAME);
+      store.put(
+        {
+          filename: file.name,
+          fileSize: file.size,
+          pdfBytes: arrayBuffer,
+          parsed,
+          cleaningOptions: {
+            removeHeaders: dom.chkRemoveHeaders.checked,
+            removePageNums: dom.chkRemovePageNums.checked,
+            fixLineBreaks: dom.chkFixLineBreaks.checked,
+          },
+          savedAt: new Date().toISOString(),
+        },
+        ACTIVE_DOC_KEY
+      );
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (err) {
+    console.warn("No se pudo guardar el PDF en IndexedDB:", err);
+  }
+}
+
+async function loadPdfFromLocalDb() {
+  try {
+    const db = await openLocalPdfDb();
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction(LOCAL_STORE_NAME, "readonly");
+      const store = tx.objectStore(LOCAL_STORE_NAME);
+      const getReq = store.get(ACTIVE_DOC_KEY);
+      getReq.onsuccess = () => resolve(getReq.result || null);
+      getReq.onerror = () => reject(getReq.error);
+    });
+    db.close();
+    return record;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function clearPdfFromLocalDb() {
+  try {
+    const db = await openLocalPdfDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(LOCAL_STORE_NAME, "readwrite");
+      const store = tx.objectStore(LOCAL_STORE_NAME);
+      store.delete(ACTIVE_DOC_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (_) {}
+}
+
+async function restorePersistedPdfFromLocalDb() {
+  const record = await loadPdfFromLocalDb();
+  if (!record || !record.pdfBytes || !record.parsed) return;
+
+  try {
+    if (record.cleaningOptions) {
+      dom.chkRemoveHeaders.checked = Boolean(record.cleaningOptions.removeHeaders);
+      dom.chkRemovePageNums.checked = Boolean(record.cleaningOptions.removePageNums);
+      dom.chkFixLineBreaks.checked = Boolean(record.cleaningOptions.fixLineBreaks);
+    }
+
+    const blob = new Blob([record.pdfBytes], { type: "application/pdf" });
+    state.rawFile = new File([blob], record.filename || "documento.pdf", {
+      type: "application/pdf",
+    });
+
+    await initializeDocument(record.parsed, record.pdfBytes, false, true);
+  } catch (err) {
+    console.warn("Error al restaurar PDF guardado localmente:", err);
+  }
+}
+
+async function closeCurrentDocument() {
+  stopPlayback();
+  await clearPdfFromLocalDb();
+  state.docData = null;
+  state.rawFile = null;
+  state.pdfJsDoc = null;
+  state.currentPage = 1;
+  state.currentSentenceIdx = 0;
+  dom.pdfFileInput.value = "";
+
+  dom.readerSplitContainer.classList.add("hidden");
+  dom.emptyStateDropzone.classList.remove("hidden");
+  dom.resumeBanner.classList.add("hidden");
+  if (dom.btnClearSavedPdf) dom.btnClearSavedPdf.classList.add("hidden");
+
+  dom.docTitleText.textContent = "Sin documento cargado";
+  dom.docMetaText.textContent = "Selecciona un PDF";
+  dom.statPages.textContent = "0";
+  dom.statWords.textContent = "0";
+  dom.docDurationBadge.textContent = "0 min";
+  dom.currentPageLabel.textContent = "0";
+  dom.totalPagesLabel.textContent = "0";
+  dom.bookProgressPct.textContent = "0%";
+  if (dom.bookProgressBarFill) dom.bookProgressBarFill.style.width = "0%";
+  dom.playerChapterLabel.textContent = "Sin documento activo";
+  dom.nowPlayingSentence.textContent = "Abre un archivo PDF para iniciar la lectura.";
+  dom.btnPlayPause.disabled = true;
+  dom.btnPrevSentence.disabled = true;
+  dom.btnNextSentence.disabled = true;
+  dom.btnOpenExportModal.disabled = true;
+}
+
+/* ==========================================================================
+   DETECCIÓN DE VOCES Y EVENTOS DE INTERFAZ
+   ========================================================================== */
 
 async function detectEnvironmentAndVoices() {
   try {
@@ -173,6 +322,12 @@ function setupEventListeners() {
     const file = e.target.files?.[0];
     if (file) handleUploadFile(file);
   });
+
+  if (dom.btnClearSavedPdf) {
+    dom.btnClearSavedPdf.addEventListener("click", () => {
+      closeCurrentDocument();
+    });
+  }
 
   window.addEventListener("dragover", (e) => {
     e.preventDefault();
@@ -358,7 +513,8 @@ async function handleUploadFile(file, keepPosition = false) {
       });
     }
 
-    await initializeDocument(parsed, arrayBuffer, keepPosition);
+    await savePdfToLocalDb(file, arrayBuffer, parsed);
+    await initializeDocument(parsed, arrayBuffer, keepPosition, false);
   } catch (err) {
     alert(`Error: ${err.message}`);
     dom.nowPlayingSentence.textContent = "Error al cargar el documento.";
@@ -446,7 +602,7 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
   };
 }
 
-async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) {
+async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, autoRestore = false) {
   state.docData = parsed;
 
   if (window.pdfjsLib && pdfArrayBuffer) {
@@ -461,6 +617,7 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
 
   dom.emptyStateDropzone.classList.add("hidden");
   dom.readerSplitContainer.classList.remove("hidden");
+  if (dom.btnClearSavedPdf) dom.btnClearSavedPdf.classList.remove("hidden");
 
   const sizeMb = state.rawFile ? `${(state.rawFile.size / (1024 * 1024)).toFixed(1)} MB` : "PDF";
   dom.docTitleText.textContent = parsed.title;
@@ -482,6 +639,21 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false) 
   dom.btnOpenExportModal.disabled = !state.backendAvailable;
 
   renderChaptersAndPages();
+
+  // Si se está restaurando automáticamente desde IndexedDB, recuperar página y oración directamente
+  const savedProgress = getSavedProgressObject(parsed.doc_id);
+  if (autoRestore && savedProgress) {
+    if (savedProgress.speed) {
+      state.playbackSpeed = parseFloat(savedProgress.speed) || 1.0;
+      dom.speedSelect.value = String(state.playbackSpeed);
+    }
+    if (savedProgress.voice && Array.from(dom.voiceSelect.options).some((o) => o.value === savedProgress.voice)) {
+      state.selectedVoice = savedProgress.voice;
+      dom.voiceSelect.value = savedProgress.voice;
+    }
+    await goToPage(savedProgress.page || 1, savedProgress.sentence || 0, false);
+    return;
+  }
 
   const targetPage = keepPosition ? Math.min(state.currentPage, parsed.total_pages) : 1;
   const targetSentence = keepPosition ? state.currentSentenceIdx : 0;
@@ -931,6 +1103,15 @@ function getProgressStorageKey(docId) {
   return `voxpdf_progress_${docId}`;
 }
 
+function getSavedProgressObject(docId) {
+  try {
+    const raw = localStorage.getItem(getProgressStorageKey(docId));
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function saveReadingProgress() {
   if (!state.docData) return;
   const payload = {
@@ -947,32 +1128,23 @@ function saveReadingProgress() {
 }
 
 function checkSavedProgress(docId) {
-  try {
-    const raw = localStorage.getItem(getProgressStorageKey(docId));
-    if (!raw) {
-      dom.resumeBanner.classList.add("hidden");
-      return;
-    }
-    const saved = JSON.parse(raw);
-    if (saved.page === 1 && saved.sentence === 0) {
-      dom.resumeBanner.classList.add("hidden");
-      return;
-    }
-
-    dom.resumeBannerText.textContent = `Continuar desde la página ${saved.page}, oración ${saved.sentence + 1}.`;
-    dom.resumeBanner.classList.remove("hidden");
-
-    dom.btnResumeConfirm.onclick = () => {
-      dom.resumeBanner.classList.add("hidden");
-      goToPage(saved.page, saved.sentence, false);
-    };
-    dom.btnResumeDismiss.onclick = () => {
-      dom.resumeBanner.classList.add("hidden");
-      saveReadingProgress();
-    };
-  } catch (_) {
+  const saved = getSavedProgressObject(docId);
+  if (!saved || (saved.page === 1 && saved.sentence === 0)) {
     dom.resumeBanner.classList.add("hidden");
+    return;
   }
+
+  dom.resumeBannerText.textContent = `Continuar desde la página ${saved.page}, oración ${saved.sentence + 1}.`;
+  dom.resumeBanner.classList.remove("hidden");
+
+  dom.btnResumeConfirm.onclick = () => {
+    dom.resumeBanner.classList.add("hidden");
+    goToPage(saved.page, saved.sentence, false);
+  };
+  dom.btnResumeDismiss.onclick = () => {
+    dom.resumeBanner.classList.add("hidden");
+    saveReadingProgress();
+  };
 }
 
 function openExportModal() {
@@ -1000,12 +1172,22 @@ async function handleExportMp3() {
   const startPage = Math.max(1, parseInt(dom.exportStartPage.value, 10) || 1);
   const endPage = Math.max(startPage, parseInt(dom.exportEndPage.value, 10) || startPage);
 
+  // Construir texto combinado desde el documento local por si el servidor fue reiniciado
+  const selectedSentences = [];
+  for (let p = startPage; p <= endPage && p <= state.docData.pages.length; p++) {
+    const pageSents = state.docData.pages[p - 1]?.sentences || [];
+    for (const s of pageSents) {
+      if (s.text) selectedSentences.push(s.text);
+    }
+  }
+  const fallbackText = selectedSentences.join(" ").slice(0, 4900);
+
   dom.btnConfirmExport.disabled = true;
   dom.exportStatusMsg.textContent = `Generando archivo MP3 (páginas ${startPage} a ${endPage})...`;
   dom.exportStatusMsg.classList.remove("hidden");
 
   try {
-    const res = await fetch("./api/tts/export", {
+    let res = await fetch("./api/tts/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1017,6 +1199,21 @@ async function handleExportMp3() {
         book_title: state.docData.title,
       }),
     });
+
+    if (res.status === 404 && fallbackText) {
+      res = await fetch("./api/tts/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          custom_text: fallbackText,
+          start_page: startPage,
+          end_page: endPage,
+          voice: isBrowserSpeechSelected() ? "es-MX-DaliaNeural" : state.selectedVoice,
+          speed: state.playbackSpeed,
+          book_title: state.docData.title,
+        }),
+      });
+    }
 
     if (!res.ok) {
       const err = await res.json();
