@@ -52,6 +52,7 @@ const dom = {
   chkRemoveHeaders: document.getElementById("chkRemoveHeaders"),
   chkRemovePageNums: document.getElementById("chkRemovePageNums"),
   chkFixLineBreaks: document.getElementById("chkFixLineBreaks"),
+  chkSplitByCommas: document.getElementById("chkSplitByCommas"),
   countHeadersRemoved: document.getElementById("countHeadersRemoved"),
   countPageNumsRemoved: document.getElementById("countPageNumsRemoved"),
 
@@ -159,6 +160,7 @@ async function savePdfToLocalDb(file, arrayBuffer, parsed) {
             removeHeaders: dom.chkRemoveHeaders.checked,
             removePageNums: dom.chkRemovePageNums.checked,
             fixLineBreaks: dom.chkFixLineBreaks.checked,
+            splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
           },
           savedAt: new Date().toISOString(),
         },
@@ -213,6 +215,9 @@ async function restorePersistedPdfFromLocalDb() {
       dom.chkRemoveHeaders.checked = Boolean(record.cleaningOptions.removeHeaders);
       dom.chkRemovePageNums.checked = Boolean(record.cleaningOptions.removePageNums);
       dom.chkFixLineBreaks.checked = Boolean(record.cleaningOptions.fixLineBreaks);
+      if (dom.chkSplitByCommas && record.cleaningOptions.splitByCommas !== undefined) {
+        dom.chkSplitByCommas.checked = Boolean(record.cleaningOptions.splitByCommas);
+      }
     }
 
     const blob = new Blob([record.pdfBytes], { type: "application/pdf" });
@@ -357,7 +362,8 @@ function setupEventListeners() {
     }
   });
 
-  [dom.chkRemoveHeaders, dom.chkRemovePageNums, dom.chkFixLineBreaks].forEach((chk) => {
+  [dom.chkRemoveHeaders, dom.chkRemovePageNums, dom.chkFixLineBreaks, dom.chkSplitByCommas].forEach((chk) => {
+    if (!chk) return;
     chk.addEventListener("change", () => {
       if (!state.docData || !state.rawFile) return;
       stopPlayback();
@@ -507,6 +513,7 @@ async function handleUploadFile(file, keepPosition = false) {
       formData.append("remove_headers_footers", dom.chkRemoveHeaders.checked);
       formData.append("remove_page_numbers", dom.chkRemovePageNums.checked);
       formData.append("fix_line_breaks", dom.chkFixLineBreaks.checked);
+      formData.append("split_by_commas", dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true);
 
       const res = await fetch("./api/pdf/parse", {
         method: "POST",
@@ -522,6 +529,7 @@ async function handleUploadFile(file, keepPosition = false) {
         removeHeaders: dom.chkRemoveHeaders.checked,
         removePageNums: dom.chkRemovePageNums.checked,
         fixLineBreaks: dom.chkFixLineBreaks.checked,
+        splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
       });
     }
 
@@ -569,10 +577,30 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
       fullText = fullText.replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ]{2,})-\s+([a-záéíóúñ]{2,})/g, "$1$2");
     }
 
-    const rawSentences = fullText
-      .split(/(?<=[.!?…])\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const abbrRegex = /^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.$/i;
+    const splitPattern = options.splitByCommas !== false
+      ? /(?<=[.!?…])\s+|(?<!\d)(?<=[,;:])\s+/
+      : /(?<=[.!?…])\s+/;
+
+    const rawParts = fullText.split(splitPattern).map((s) => s.trim()).filter(Boolean);
+    const rawSentences = [];
+    let clauseBuf = "";
+
+    for (const piece of rawParts) {
+      if (clauseBuf) {
+        const words = clauseBuf.split(/\s+/);
+        const lastWord = words[words.length - 1] || "";
+        if (abbrRegex.test(lastWord)) {
+          clauseBuf += " " + piece;
+          continue;
+        }
+        rawSentences.push(clauseBuf);
+        clauseBuf = piece;
+      } else {
+        clauseBuf = piece;
+      }
+    }
+    if (clauseBuf) rawSentences.push(clauseBuf);
 
     const pageSentences = rawSentences.map((sText, idx) => ({
       id: `p${p}_s${idx}`,

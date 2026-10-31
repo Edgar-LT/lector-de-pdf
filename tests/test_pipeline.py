@@ -63,6 +63,23 @@ def test_smart_pdf_cleaner_removes_headers_and_page_numbers(tmp_path):
     assert "Página 1 de 3" not in all_text
 
 
+def test_split_by_commas_and_periods():
+    """Verifica la segmentación de lectura por comas y puntos respetando abreviaturas y números."""
+    sample = "En la pág. 15 se explica que, según el Dr. Pérez, el voltaje es de 3,5 V; además, es constante."
+
+    clauses_commas = SmartPDFCleaner.split_into_sentences(sample, split_by_commas=True)
+    assert len(clauses_commas) == 5
+    assert clauses_commas[0] == "En la pág. 15 se explica que,"
+    assert clauses_commas[1] == "según el Dr. Pérez,"
+    assert clauses_commas[2] == "el voltaje es de 3,5 V;"
+    assert clauses_commas[3] == "además,"
+    assert clauses_commas[4] == "es constante."
+
+    sentences_only = SmartPDFCleaner.split_into_sentences(sample, split_by_commas=False)
+    assert len(sentences_only) == 1
+    assert "3,5 V" in sentences_only[0]
+
+
 def test_api_endpoints_and_production_compliance():
     """Verifica endpoints REST, cabeceras de seguridad y archivos de monetización/cumplimiento."""
     rate_limiter.reset()

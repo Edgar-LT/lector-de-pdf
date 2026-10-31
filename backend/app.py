@@ -87,6 +87,7 @@ async def parse_pdf(
     remove_headers_footers: bool = Form(True),
     remove_page_numbers: bool = Form(True),
     fix_line_breaks: bool = Form(True),
+    split_by_commas: bool = Form(True),
 ) -> dict[str, Any]:
     rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
 
@@ -101,6 +102,7 @@ async def parse_pdf(
         remove_headers_footers=remove_headers_footers,
         remove_page_numbers=remove_page_numbers,
         fix_line_breaks=fix_line_breaks,
+        split_by_commas=split_by_commas,
     )
     cleaner = SmartPDFCleaner(options=options)
     try:

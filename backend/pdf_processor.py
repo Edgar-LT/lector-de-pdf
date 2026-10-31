@@ -19,12 +19,22 @@ SENTENCE_SPLIT_REGEX = re.compile(
     r"(?<=[.!?…])\s+(?=[A-ZÁÉÍÓÚÑÜ0-9«\"'“¿¡])"
 )
 
+SPLIT_COMMAS_AND_PERIODS_REGEX = re.compile(
+    r"(?<=[.!?…])\s+|(?<!\d)(?<=[,;:])\s+"
+)
+
+ABBREVIATION_PATTERN = re.compile(
+    r"^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.$",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class CleaningOptions:
     remove_headers_footers: bool = True
     remove_page_numbers: bool = True
     fix_line_breaks: bool = True
+    split_by_commas: bool = True
 
 
 @dataclass
@@ -107,17 +117,38 @@ class SmartPDFCleaner:
         cleaned = re.sub(r"^\s*[•●▪▸►]\s*", "", cleaned)
         return cleaned.strip()
 
-    @staticmethod
-    def split_into_sentences(paragraph: str) -> list[str]:
+    @classmethod
+    def split_into_sentences(cls, paragraph: str, split_by_commas: bool = True) -> list[str]:
         if not paragraph:
             return []
-        parts = SENTENCE_SPLIT_REGEX.split(paragraph)
+
+        if split_by_commas:
+            parts = SPLIT_COMMAS_AND_PERIODS_REGEX.split(paragraph)
+        else:
+            parts = SENTENCE_SPLIT_REGEX.split(paragraph)
+
+        raw = [p.strip() for p in parts if p.strip()]
+        merged: list[str] = []
+        buf = ""
+
+        # Evitar cortes en abreviaturas comunes (ej. "pág. 15", "Dr. Pérez")
+        for piece in raw:
+            if buf:
+                words = buf.split()
+                last_word = words[-1] if words else ""
+                if ABBREVIATION_PATTERN.match(last_word):
+                    buf += " " + piece
+                    continue
+                merged.append(buf)
+                buf = piece
+            else:
+                buf = piece
+        if buf:
+            merged.append(buf)
+
         sentences: list[str] = []
-        for part in parts:
-            s = part.strip()
-            if not s:
-                continue
-            # Si una oración es extremadamente larga (> 340 caracteres), dividir en punto y coma o dos puntos
+        for s in merged:
+            # Si un fragmento es excesivamente largo (> 340 caracteres), dividir en punto y coma o dos puntos
             if len(s) > 340 and (";" in s or ":" in s):
                 subparts = re.split(r"(?<=[;:])\s+", s)
                 sentences.extend([sp.strip() for sp in subparts if sp.strip()])
@@ -209,7 +240,9 @@ class SmartPDFCleaner:
                     round(bbox[3] / page_height, 4),
                 ]
 
-                sentences = self.split_into_sentences(cleaned_para)
+                sentences = self.split_into_sentences(
+                    cleaned_para, split_by_commas=self.options.split_by_commas
+                )
                 if not sentences:
                     continue
 
