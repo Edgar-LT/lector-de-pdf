@@ -730,7 +730,6 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, 
   dom.btnPlayPause.disabled = false;
   dom.btnPrevSentence.disabled = false;
   dom.btnNextSentence.disabled = false;
-  dom.btnOpenExportModal.disabled = !state.backendAvailable;
 
   renderChaptersAndPages();
 
