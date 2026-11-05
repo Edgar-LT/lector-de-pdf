@@ -30,6 +30,11 @@ const state = {
   playSessionId: 0,
   wakeLock: null,
   speechKeepAliveInterval: null,
+  fontSizeLevel: localStorage.getItem("voxpdf_font_size") || "normal",
+  scriptSearchQuery: "",
+  sleepTimerMode: "0",
+  sleepTimerEndTime: null,
+  sleepTimerIntervalId: null,
 };
 
 const dom = {
@@ -53,6 +58,7 @@ const dom = {
   chkRemovePageNums: document.getElementById("chkRemovePageNums"),
   chkFixLineBreaks: document.getElementById("chkFixLineBreaks"),
   chkSplitByCommas: document.getElementById("chkSplitByCommas"),
+  chkRemoveCitations: document.getElementById("chkRemoveCitations"),
   countHeadersRemoved: document.getElementById("countHeadersRemoved"),
   countPageNumsRemoved: document.getElementById("countPageNumsRemoved"),
 
@@ -72,6 +78,9 @@ const dom = {
   pdfCanvas: document.getElementById("pdfCanvas"),
   pdfHighlightBox: document.getElementById("pdfHighlightBox"),
   sentencesContainer: document.getElementById("sentencesContainer"),
+  scriptSearchInput: document.getElementById("scriptSearchInput"),
+  btnFontDec: document.getElementById("btnFontDec"),
+  btnFontInc: document.getElementById("btnFontInc"),
 
   // Reproductor inferior
   btnPrevSentence: document.getElementById("btnPrevSentence"),
@@ -86,6 +95,8 @@ const dom = {
   pageProgressFill: document.getElementById("pageProgressFill"),
   voiceSelect: document.getElementById("voiceSelect"),
   speedSelect: document.getElementById("speedSelect"),
+  sleepTimerSelect: document.getElementById("sleepTimerSelect"),
+  sleepTimerBadge: document.getElementById("sleepTimerBadge"),
   neuralAudioPlayer: document.getElementById("neuralAudioPlayer"),
   bgKeepAliveAudio: document.getElementById("bgKeepAliveAudio"),
 
@@ -94,18 +105,6 @@ const dom = {
   resumeBannerText: document.getElementById("resumeBannerText"),
   btnResumeConfirm: document.getElementById("btnResumeConfirm"),
   btnResumeDismiss: document.getElementById("btnResumeDismiss"),
-
-  // Exportación MP3
-  btnOpenExportModal: document.getElementById("btnOpenExportModal"),
-  exportModal: document.getElementById("exportModal"),
-  btnCloseExportModal: document.getElementById("btnCloseExportModal"),
-  btnCancelExport: document.getElementById("btnCancelExport"),
-  btnConfirmExport: document.getElementById("btnConfirmExport"),
-  exportStartPage: document.getElementById("exportStartPage"),
-  exportEndPage: document.getElementById("exportEndPage"),
-  btnRangeCurrentPage: document.getElementById("btnRangeCurrentPage"),
-  btnRangeAllPages: document.getElementById("btnRangeAllPages"),
-  exportStatusMsg: document.getElementById("exportStatusMsg"),
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -161,6 +160,7 @@ async function savePdfToLocalDb(file, arrayBuffer, parsed) {
             removePageNums: dom.chkRemovePageNums.checked,
             fixLineBreaks: dom.chkFixLineBreaks.checked,
             splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
+            removeCitations: dom.chkRemoveCitations ? dom.chkRemoveCitations.checked : true,
           },
           savedAt: new Date().toISOString(),
         },
@@ -218,6 +218,9 @@ async function restorePersistedPdfFromLocalDb() {
       if (dom.chkSplitByCommas && record.cleaningOptions.splitByCommas !== undefined) {
         dom.chkSplitByCommas.checked = Boolean(record.cleaningOptions.splitByCommas);
       }
+      if (dom.chkRemoveCitations && record.cleaningOptions.removeCitations !== undefined) {
+        dom.chkRemoveCitations.checked = Boolean(record.cleaningOptions.removeCitations);
+      }
     }
 
     const blob = new Blob([record.pdfBytes], { type: "application/pdf" });
@@ -260,7 +263,6 @@ async function closeCurrentDocument() {
   dom.btnPlayPause.disabled = true;
   dom.btnPrevSentence.disabled = true;
   dom.btnNextSentence.disabled = true;
-  dom.btnOpenExportModal.disabled = true;
 
   if ("mediaSession" in navigator) {
     try {
@@ -362,7 +364,7 @@ function setupEventListeners() {
     }
   });
 
-  [dom.chkRemoveHeaders, dom.chkRemovePageNums, dom.chkFixLineBreaks, dom.chkSplitByCommas].forEach((chk) => {
+  [dom.chkRemoveHeaders, dom.chkRemovePageNums, dom.chkFixLineBreaks, dom.chkSplitByCommas, dom.chkRemoveCitations].forEach((chk) => {
     if (!chk) return;
     chk.addEventListener("change", () => {
       if (!state.docData || !state.rawFile) return;
@@ -426,6 +428,20 @@ function setupEventListeners() {
     if (state.isPlaying) playCurrentSentence();
   });
 
+  if (dom.sleepTimerSelect) {
+    dom.sleepTimerSelect.addEventListener("change", handleSleepTimerChange);
+  }
+
+  if (dom.btnFontDec) {
+    dom.btnFontDec.addEventListener("click", () => changeFontSize(-1));
+  }
+  if (dom.btnFontInc) {
+    dom.btnFontInc.addEventListener("click", () => changeFontSize(1));
+  }
+  if (dom.scriptSearchInput) {
+    dom.scriptSearchInput.addEventListener("input", handleSearchInput);
+  }
+
   window.addEventListener("keydown", (e) => {
     if (!state.docData) return;
     const tag = document.activeElement?.tagName?.toLowerCase();
@@ -442,20 +458,6 @@ function setupEventListeners() {
       stepSentence(-1);
     }
   });
-
-  dom.btnOpenExportModal.addEventListener("click", openExportModal);
-  dom.btnCloseExportModal.addEventListener("click", closeExportModal);
-  dom.btnCancelExport.addEventListener("click", closeExportModal);
-  dom.btnRangeCurrentPage.addEventListener("click", () => {
-    dom.exportStartPage.value = state.currentPage;
-    dom.exportEndPage.value = state.currentPage;
-  });
-  dom.btnRangeAllPages.addEventListener("click", () => {
-    if (!state.docData) return;
-    dom.exportStartPage.value = 1;
-    dom.exportEndPage.value = state.docData.total_pages;
-  });
-  dom.btnConfirmExport.addEventListener("click", handleExportMp3);
 
   const btnWatchAdUnlock = document.getElementById("btnWatchAdUnlock");
   if (btnWatchAdUnlock && window.VoxAdManager) {
@@ -514,6 +516,7 @@ async function handleUploadFile(file, keepPosition = false) {
       formData.append("remove_page_numbers", dom.chkRemovePageNums.checked);
       formData.append("fix_line_breaks", dom.chkFixLineBreaks.checked);
       formData.append("split_by_commas", dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true);
+      formData.append("remove_academic_citations", dom.chkRemoveCitations ? dom.chkRemoveCitations.checked : true);
 
       const res = await fetch("./api/pdf/parse", {
         method: "POST",
@@ -530,6 +533,7 @@ async function handleUploadFile(file, keepPosition = false) {
         removePageNums: dom.chkRemovePageNums.checked,
         fixLineBreaks: dom.chkFixLineBreaks.checked,
         splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
+        removeAcademicCitations: dom.chkRemoveCitations ? dom.chkRemoveCitations.checked : true,
       });
     }
 
@@ -550,7 +554,6 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
   let totalSentences = 0;
   let totalWords = 0;
   const pages = [];
-  const chapters = [{ id: "ch_1", level: 1, title: "Inicio del documento", page_number: 1 }];
   const pageNumRegex = /^\s*(?:p[áa]gina|p[áa]g\.?|page)?\s*\d+\s*(?:(?:de|of|\/|-)\s*\d+)?\s*$/i;
 
   for (let p = 1; p <= totalPages; p++) {
@@ -575,6 +578,13 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
     let fullText = lines.join(" ");
     if (options.fixLineBreaks) {
       fullText = fullText.replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ]{2,})-\s+([a-záéíóúñ]{2,})/g, "$1$2");
+      // Despaciado de títulos tipográficos (p. ej. "A R C O  I :  L A   F O R J A" -> "ARCO I : LA FORJA")
+      fullText = fullText.replace(/(?<=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b) (?=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)/g, "");
+      fullText = fullText.replace(/\s{2,}/g, " ");
+    }
+    if (options.removeAcademicCitations) {
+      // Eliminar citas numéricas tipo [1], [14, 21, 28]
+      fullText = fullText.replace(/\s*\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]/g, "");
     }
 
     const abbrRegex = /^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.$/i;
@@ -621,6 +631,50 @@ async function parsePdfClientSide(arrayBuffer, filename, options) {
       sentences: pageSentences,
       word_count: wordsInPage,
     });
+  }
+
+  let chapters = [];
+  try {
+    const outline = await pdf.getOutline();
+    if (outline && outline.length > 0) {
+      for (let i = 0; i < outline.length; i++) {
+        const item = outline[i];
+        let pageNum = 1;
+        if (item.dest) {
+          const dest = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
+          if (dest && dest[0]) {
+            const pageIndex = await pdf.getPageIndex(dest[0]);
+            pageNum = pageIndex + 1;
+          }
+        }
+        chapters.push({
+          id: `ch_${i + 1}`,
+          level: 1,
+          title: item.title || `Capítulo ${i + 1}`,
+          page_number: pageNum,
+        });
+      }
+    }
+  } catch (_) {}
+
+  // Heurística de detección si no hay marcadores
+  if (chapters.length === 0) {
+    const chapterHeadingRegex = /^\s*(?:cap[íi]tulo|cap\.|acto|secci[óo]n|parte|arco|libro)\s+([0-9ivxlcdm]+|[a-záéíóúñ]+)/i;
+    pages.forEach((pg) => {
+      const firstSentence = pg.sentences?.[0]?.text || "";
+      if (chapterHeadingRegex.test(firstSentence)) {
+        chapters.push({
+          id: `ch_${chapters.length + 1}`,
+          level: 1,
+          title: firstSentence.slice(0, 48),
+          page_number: pg.page_number,
+        });
+      }
+    });
+  }
+
+  if (chapters.length === 0) {
+    chapters = [{ id: "ch_1", level: 1, title: "Inicio del documento", page_number: 1 }];
   }
 
   return {
@@ -753,6 +807,157 @@ function renderChaptersAndPages() {
   }
 }
 
+function findChapterForPage(pageNum) {
+  if (!state.docData?.chapters?.length) return null;
+  let active = state.docData.chapters[0];
+  for (const ch of state.docData.chapters) {
+    if (ch.page_number <= pageNum) {
+      active = ch;
+    }
+  }
+  return active;
+}
+
+function getFontSizeClasses() {
+  switch (state.fontSizeLevel) {
+    case "compact":
+      return { text: "text-xs", pad: "px-3 py-1.5", tag: "text-[10px]" };
+    case "large":
+      return { text: "text-base", pad: "px-4 py-3", tag: "text-xs" };
+    case "normal":
+    default:
+      return { text: "text-sm", pad: "px-3.5 py-2", tag: "text-[11px]" };
+  }
+}
+
+function escapeHtml(str) {
+  return String(str || "").replace(/[&<>"']/g, (m) => {
+    switch (m) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      case "'": return "&#39;";
+      default: return m;
+    }
+  });
+}
+
+function escapeRegex(str) {
+  return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatSentenceWithSearch(text) {
+  const safeText = escapeHtml(text);
+  if (!state.scriptSearchQuery) return safeText;
+  try {
+    const regex = new RegExp(`(${escapeRegex(state.scriptSearchQuery)})`, "gi");
+    return safeText.replace(regex, `<mark class="bg-amber-400/30 text-amber-200 px-0.5 rounded font-semibold">$1</mark>`);
+  } catch (_) {
+    return safeText;
+  }
+}
+
+function applySearchFilter() {
+  const q = state.scriptSearchQuery;
+  const cards = dom.sentencesContainer.querySelectorAll("[data-sentence-index]");
+  const pageObj = state.docData?.pages?.[state.currentPage - 1];
+  const sentences = pageObj?.sentences || [];
+
+  cards.forEach((card) => {
+    const idx = parseInt(card.dataset.sentenceIndex, 10);
+    const s = sentences[idx];
+    if (!s) return;
+    if (!q) {
+      card.classList.remove("hidden");
+    } else {
+      const match = s.text.toLowerCase().includes(q);
+      card.classList.toggle("hidden", !match);
+    }
+  });
+}
+
+function handleSearchInput(e) {
+  state.scriptSearchQuery = (e.target.value || "").trim().toLowerCase();
+  highlightActiveSentence();
+}
+
+function changeFontSize(delta) {
+  const levels = ["compact", "normal", "large"];
+  let idx = levels.indexOf(state.fontSizeLevel);
+  if (idx === -1) idx = 1;
+  const nextIdx = Math.max(0, Math.min(levels.length - 1, idx + delta));
+  state.fontSizeLevel = levels[nextIdx];
+  try {
+    localStorage.setItem("voxpdf_font_size", state.fontSizeLevel);
+  } catch (_) {}
+  highlightActiveSentence();
+}
+
+function handleSleepTimerChange() {
+  const mode = dom.sleepTimerSelect.value;
+  state.sleepTimerMode = mode;
+  if (state.sleepTimerIntervalId) {
+    clearInterval(state.sleepTimerIntervalId);
+    state.sleepTimerIntervalId = null;
+  }
+  state.sleepTimerEndTime = null;
+
+  if (mode === "0") {
+    if (dom.sleepTimerBadge) {
+      dom.sleepTimerBadge.classList.add("hidden");
+      dom.sleepTimerBadge.textContent = "";
+    }
+    return;
+  }
+
+  if (mode === "chapter") {
+    if (dom.sleepTimerBadge) {
+      dom.sleepTimerBadge.classList.remove("hidden");
+      dom.sleepTimerBadge.textContent = "Fin Cap.";
+    }
+    return;
+  }
+
+  const minutes = parseInt(mode, 10);
+  if (!isNaN(minutes) && minutes > 0) {
+    state.sleepTimerEndTime = Date.now() + minutes * 60 * 1000;
+    if (dom.sleepTimerBadge) {
+      dom.sleepTimerBadge.classList.remove("hidden");
+    }
+    updateSleepTimerDisplay();
+    state.sleepTimerIntervalId = setInterval(updateSleepTimerDisplay, 1000);
+  }
+}
+
+function updateSleepTimerDisplay() {
+  if (!state.sleepTimerEndTime) return;
+  const diffMs = state.sleepTimerEndTime - Date.now();
+  if (diffMs <= 0) {
+    if (state.sleepTimerIntervalId) {
+      clearInterval(state.sleepTimerIntervalId);
+      state.sleepTimerIntervalId = null;
+    }
+    state.sleepTimerMode = "0";
+    state.sleepTimerEndTime = null;
+    if (dom.sleepTimerSelect) dom.sleepTimerSelect.value = "0";
+    if (dom.sleepTimerBadge) {
+      dom.sleepTimerBadge.classList.add("hidden");
+      dom.sleepTimerBadge.textContent = "";
+    }
+    stopPlayback();
+    dom.nowPlayingSentence.textContent = "Temporizador de sueño: Reproducción pausada.";
+    return;
+  }
+
+  const totalSeconds = Math.ceil(diffMs / 1000);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  if (dom.sleepTimerBadge) {
+    dom.sleepTimerBadge.textContent = `${m}:${String(s).padStart(2, "0")}`;
+  }
+}
+
 /**
  * Cambia de página y sincroniza capítulo y audio preservando la posición de scroll de la ventana.
  */
@@ -762,8 +967,29 @@ async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
   const total = state.docData.total_pages;
   const clampedPage = Math.max(1, Math.min(total, pageNumber));
 
+  const prevChapter = findChapterForPage(state.currentPage);
   const pageChanged = state.currentPage !== clampedPage || dom.sentencesContainer.children.length === 0;
   state.currentPage = clampedPage;
+
+  const newChapter = findChapterForPage(clampedPage);
+  if (
+    pageChanged &&
+    state.sleepTimerMode === "chapter" &&
+    state.isPlaying &&
+    prevChapter &&
+    newChapter &&
+    prevChapter.id !== newChapter.id
+  ) {
+    stopPlayback();
+    state.sleepTimerMode = "0";
+    if (dom.sleepTimerSelect) dom.sleepTimerSelect.value = "0";
+    if (dom.sleepTimerBadge) {
+      dom.sleepTimerBadge.classList.add("hidden");
+      dom.sleepTimerBadge.textContent = "";
+    }
+    dom.nowPlayingSentence.textContent = "Temporizador de sueño: Fin de capítulo alcanzado.";
+    autoPlay = false;
+  }
 
   const pageObj = state.docData.pages[clampedPage - 1];
   const sentences = pageObj?.sentences || [];
@@ -830,35 +1056,39 @@ function highlightActiveSentence() {
   const sentences = pageObj?.sentences || [];
   const totalInPage = sentences.length;
   const idx = state.currentSentenceIdx;
+  const fontStyle = getFontSizeClasses();
 
   sentences.forEach((s, sIdx) => {
     const node = document.getElementById(`sentence-node-${sIdx}`);
     if (!node) return;
     const numTag = String(sIdx + 1).padStart(2, "0");
+    const formattedText = formatSentenceWithSearch(s.text);
 
     if (sIdx === idx) {
       node.className =
-        "px-3.5 py-2.5 rounded-lg bg-accent/[0.1] border-l-2 border-accent-light flex items-start gap-3 cursor-pointer transition-colors";
+        `${fontStyle.pad} rounded-lg bg-accent/[0.1] border-l-2 border-accent-light flex items-start gap-3 cursor-pointer transition-colors`;
       node.innerHTML = `
-        <span class="font-mono text-[11px] text-accent-light mt-0.5 select-none">${numTag}</span>
-        <p class="text-sm text-slate-100 leading-relaxed font-medium">${s.text}</p>
+        <span class="font-mono ${fontStyle.tag} text-accent-light mt-0.5 select-none">${numTag}</span>
+        <p class="${fontStyle.text} text-slate-100 leading-relaxed font-medium">${formattedText}</p>
       `;
     } else if (sIdx < idx) {
       node.className =
-        "px-3.5 py-2 rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer opacity-55 hover:opacity-90 transition-all";
+        `${fontStyle.pad} rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer opacity-55 hover:opacity-90 transition-all`;
       node.innerHTML = `
-        <span class="font-mono text-[11px] text-slate-500 mt-0.5 select-none">${numTag}</span>
-        <p class="text-sm text-slate-300 leading-relaxed">${s.text}</p>
+        <span class="font-mono ${fontStyle.tag} text-slate-500 mt-0.5 select-none">${numTag}</span>
+        <p class="${fontStyle.text} text-slate-300 leading-relaxed">${formattedText}</p>
       `;
     } else {
       node.className =
-        "px-3.5 py-2 rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer transition-colors";
+        `${fontStyle.pad} rounded-lg hover:bg-surface-elevated/60 flex items-start gap-3 cursor-pointer transition-colors`;
       node.innerHTML = `
-        <span class="font-mono text-[11px] text-slate-500 mt-0.5 select-none">${numTag}</span>
-        <p class="text-sm text-slate-200 leading-relaxed">${s.text}</p>
+        <span class="font-mono ${fontStyle.tag} text-slate-500 mt-0.5 select-none">${numTag}</span>
+        <p class="${fontStyle.text} text-slate-200 leading-relaxed">${formattedText}</p>
       `;
     }
   });
+
+  applySearchFilter();
 
   const currentSentenceObj = sentences[idx];
   if (currentSentenceObj) {
@@ -1325,94 +1555,4 @@ function checkSavedProgress(docId) {
     dom.resumeBanner.classList.add("hidden");
     saveReadingProgress();
   };
-}
-
-function openExportModal() {
-  if (!state.docData) return;
-  if (window.VoxAdManager && !window.VoxAdManager.hasNeuralPassActive()) {
-    window.VoxAdManager.requestRewardedUnlock(() => {
-      openExportModal();
-    });
-    return;
-  }
-  dom.exportStartPage.max = state.docData.total_pages;
-  dom.exportEndPage.max = state.docData.total_pages;
-  dom.exportStartPage.value = state.currentPage;
-  dom.exportEndPage.value = state.currentPage;
-  dom.exportStatusMsg.classList.add("hidden");
-  dom.exportModal.classList.remove("hidden");
-}
-
-function closeExportModal() {
-  dom.exportModal.classList.add("hidden");
-}
-
-async function handleExportMp3() {
-  if (!state.docData) return;
-  const startPage = Math.max(1, parseInt(dom.exportStartPage.value, 10) || 1);
-  const endPage = Math.max(startPage, parseInt(dom.exportEndPage.value, 10) || startPage);
-
-  // Construir texto combinado desde el documento local por si el servidor fue reiniciado
-  const selectedSentences = [];
-  for (let p = startPage; p <= endPage && p <= state.docData.pages.length; p++) {
-    const pageSents = state.docData.pages[p - 1]?.sentences || [];
-    for (const s of pageSents) {
-      if (s.text) selectedSentences.push(s.text);
-    }
-  }
-  const fallbackText = selectedSentences.join(" ").slice(0, 4900);
-
-  dom.btnConfirmExport.disabled = true;
-  dom.exportStatusMsg.textContent = `Generando archivo MP3 (páginas ${startPage} a ${endPage})...`;
-  dom.exportStatusMsg.classList.remove("hidden");
-
-  try {
-    let res = await fetch("./api/tts/export", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        doc_id: state.docData.doc_id,
-        start_page: startPage,
-        end_page: endPage,
-        voice: isBrowserSpeechSelected() ? "es-MX-DaliaNeural" : state.selectedVoice,
-        speed: state.playbackSpeed,
-        book_title: state.docData.title,
-      }),
-    });
-
-    if (res.status === 404 && fallbackText) {
-      res = await fetch("./api/tts/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          custom_text: fallbackText,
-          start_page: startPage,
-          end_page: endPage,
-          voice: isBrowserSpeechSelected() ? "es-MX-DaliaNeural" : state.selectedVoice,
-          speed: state.playbackSpeed,
-          book_title: state.docData.title,
-        }),
-      });
-    }
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "No se pudo exportar el MP3");
-    }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${state.docData.title.replace(/[^a-zA-Z0-9_-]/g, "_")}_Pag_${startPage}-${endPage}.mp3`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    dom.exportStatusMsg.textContent = "Archivo MP3 descargado.";
-  } catch (err) {
-    dom.exportStatusMsg.textContent = `Error: ${err.message}`;
-  } finally {
-    dom.btnConfirmExport.disabled = false;
-  }
 }

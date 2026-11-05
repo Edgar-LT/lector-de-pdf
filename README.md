@@ -6,7 +6,7 @@
 ![PyMuPDF](https://img.shields.io/badge/PyMuPDF-Extracción%20BBox-06b6d4?style=flat-square)
 ![Licencia MIT](https://img.shields.io/badge/Licencia-MIT-10b981?style=flat-square)
 
-Aplicación híbrida (**Python FastAPI + Interfaz Estudio Web**) diseñada para convertir libros, manuales técnicos, artículos académicos y datasheets en **audiolibros interactivos** con limpieza inteligente de texto, seguimiento visual oración por oración y exportación a `.MP3`.
+Aplicación híbrida (**Python FastAPI + Interfaz Estudio Web**) diseñada para convertir libros, manuales técnicos, artículos académicos y datasheets en **audiolibros interactivos** con limpieza inteligente de texto, seguimiento visual oración por oración y síntesis de voz neuronal en tiempo real con precarga asíncrona.
 
 - 🌐 **Demo Web Interactiva (GitHub Pages):** [https://edgar-lt.github.io/lector-de-pdf/](https://edgar-lt.github.io/lector-de-pdf/)
 - 💼 **Portafolio Principal (Edgar López):** [https://edgar-lt.github.io/portafolio/](https://edgar-lt.github.io/portafolio/)
@@ -26,9 +26,10 @@ Aplicación híbrida (**Python FastAPI + Interfaz Estudio Web**) diseñada para 
    - **Precarga asíncrona (`prefetch`):** Solicita en segundo plano el audio neuronal de la siguiente oración mientras se reproduce la actual, eliminando silencios entre frases.
 3. **Controles de Audiolibro y Persistencia**
    - Velocidad ajustable (`0.5x` a `2.0x`), catálogo de **8 voces neuronales** en Español e Inglés (`edge-tts`) y navegación por **Capítulos (TOC)** o cuadrícula de **Páginas**.
-   - **Guardado automático de progreso (`LocalStorage`):** Al reabrir un PDF, ofrece retomar la lectura exactamente en la página y oración donde quedó.
+   - **Guardado automático de progreso (`LocalStorage` e `IndexedDB`):** Al reabrir un PDF, retoma la lectura exactamente en la página y oración donde quedó.
+   - **Controles en segundo plano (`MediaSession API`):** Permite pausar, reanudar y avanzar frases desde la pantalla de bloqueo o controles multimedia del sistema operativo.
 4. **Arquitectura Dual (Servidor Python Local + Modo Web Live en GitHub Pages)**
-   - **En entorno local (Python):** Utiliza `PyMuPDF` + `edge-tts` con caché en disco y habilita la **exportación directa de capítulos o libros completos en `.MP3`**.
+   - **En entorno local (Python):** Utiliza `PyMuPDF` + `edge-tts` con caché inteligente SHA-256 en disco y almacén de sesión con expiración TTL.
    - **En la nube (GitHub Pages):** Detecta automáticamente la ausencia del backend Python y conmuta al motor en navegador (`PDF.js` + `Web Speech API`) para que cualquier visitante del portafolio pueda probar la aplicación en vivo sin instalar nada.
 
 ---
@@ -40,8 +41,10 @@ lector-de-pdf/
 ├── backend/
 │   ├── __init__.py
 │   ├── app.py                 # API REST en FastAPI y servidor de archivos estáticos
-│   ├── pdf_processor.py       # Motor SmartPDFCleaner con extracción por coordenadas (PyMuPDF)
-│   └── tts_engine.py          # Síntesis neuronal edge-tts con caché SHA-256 y exportador MP3
+│   ├── config.py              # Parámetros y variables de entorno de producción
+│   ├── pdf_processor.py       # Motor SmartPDFCleaner y generador de PDF desde texto (PyMuPDF)
+│   ├── security.py            # Hardening, validación binaria, TTLCacheStore y Rate Limiter
+│   └── tts_engine.py          # Síntesis neuronal edge-tts con caché SHA-256 y cuota en disco
 ├── frontend/
 │   ├── index.html             # Interfaz de estudio accesible y responsiva
 │   ├── styles.css             # Sistema visual Dark Studio
@@ -67,11 +70,11 @@ lector-de-pdf/
 
 | Método | Ruta | Descripción |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Verifica el estado del servidor Python y disponibilidad del motor TTS. |
+| `GET` | `/api/health` | Verifica el estado del servidor, estadísticas de caché y documentos activos. |
 | `GET` | `/api/voices` | Devuelve el catálogo de voces neuronales disponibles (`es-MX`, `es-ES`, `es-CO`, `es-AR`, `en-US`). |
 | `POST` | `/api/pdf/parse` | Recibe un archivo `.pdf`, aplica `SmartPDFCleaner` y retorna capítulos, páginas y oraciones con coordenadas `bbox`. |
+| `POST` | `/api/pdf/create-from-text` | Genera un archivo PDF maquetado profesionalmente a partir de texto plano pegado. |
 | `POST` | `/api/tts/speak` | Sintetiza una oración en formato `.mp3` neuronal usando caché en disco. |
-| `POST` | `/api/tts/export` | Genera y descarga un archivo `.mp3` continuo para una página o rango de páginas del documento. |
 
 ---
 

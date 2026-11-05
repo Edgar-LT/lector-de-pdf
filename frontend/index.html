@@ -63,7 +63,10 @@
       </div>
 
       <div class="flex items-center gap-2 flex-shrink-0">
-        <span id="neuralPassStatus" class="hidden sm:inline-block text-xs text-slate-400 mr-1">Exportación MP3</span>
+        <button id="btnOpenPasteModal" type="button" class="h-9 px-3 rounded-lg bg-surface hover:bg-surface-elevated border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors" title="Pegar texto y convertir a PDF">
+          <span class="material-symbols-outlined text-[17px]">edit_note</span>
+          <span class="hidden sm:inline">Pegar Texto</span>
+        </button>
 
         <label for="pdfFileInput" class="cursor-pointer h-9 px-3.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
           <span class="material-symbols-outlined text-[17px]">upload_file</span>
@@ -193,12 +196,21 @@
             </label>
 
             <!-- Opción 4: Separar por comas o puntos -->
-            <label class="pt-2.5 flex items-center justify-between gap-3 cursor-pointer">
+            <label class="py-2.5 flex items-center justify-between gap-3 cursor-pointer">
               <div class="min-w-0">
                 <span class="block text-xs text-slate-200 font-medium">Separar por comas y puntos</span>
                 <span class="block text-[11px] text-slate-400">Pausas naturales y lectura por cláusulas</span>
               </div>
               <input id="chkSplitByCommas" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+            </label>
+
+            <!-- Opción 5: Omitir citas académicas -->
+            <label class="pt-2.5 flex items-center justify-between gap-3 cursor-pointer">
+              <div class="min-w-0">
+                <span class="block text-xs text-slate-200 font-medium">Omitir citas [1, 2]</span>
+                <span class="block text-[11px] text-slate-400">Limpieza de corchetes bibliográficos</span>
+              </div>
+              <input id="chkRemoveCitations" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
             </label>
           </div>
         </div>
@@ -271,10 +283,16 @@
               Arrastra un archivo PDF aquí o selecciónalo desde tu equipo para extraer el texto limpio y escucharlo en voz alta.
             </p>
           </div>
-          <label for="pdfFileInput" class="mt-1 cursor-pointer h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
-            <span class="material-symbols-outlined text-[17px]">upload_file</span>
-            <span>Seleccionar archivo PDF</span>
-          </label>
+          <div class="flex items-center gap-2 mt-1 flex-wrap justify-center">
+            <label for="pdfFileInput" class="cursor-pointer h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined text-[17px]">upload_file</span>
+              <span>Seleccionar archivo PDF</span>
+            </label>
+            <button id="btnEmptyPaste" type="button" class="h-9 px-3.5 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined text-[17px]">edit_note</span>
+              <span>Pegar texto o borrador</span>
+            </button>
+          </div>
         </div>
 
         <!-- Escenario de lectura (oculto hasta cargar un PDF) -->
@@ -297,9 +315,25 @@
 
           <!-- Panel 2: Texto de lectura limpio -->
           <section id="scriptPane" class="w-full rounded-xl bg-surface border border-white/[0.07] p-4 flex flex-col gap-3">
-            <div class="flex items-center justify-between border-b border-white/[0.06] pb-2.5">
-              <span class="font-display font-semibold text-xs text-slate-200 uppercase tracking-wider">Texto de la página</span>
-              <span id="sentenceCounterLabel" class="font-mono text-xs text-slate-400">Oración 0 de 0</span>
+            <div class="flex items-center justify-between border-b border-white/[0.06] pb-2.5 flex-wrap gap-2">
+              <div class="flex items-center gap-2">
+                <span class="font-display font-semibold text-xs text-slate-200 uppercase tracking-wider">Texto de la página</span>
+                <span id="sentenceCounterLabel" class="font-mono text-xs text-slate-400">Oración 0 de 0</span>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <!-- Buscador de texto en la página actual -->
+                <div class="relative flex items-center">
+                  <span class="material-symbols-outlined text-slate-500 text-[15px] absolute left-2 pointer-events-none">search</span>
+                  <input id="scriptSearchInput" type="search" placeholder="Buscar en página..." class="h-7 pl-6 pr-2 rounded-md bg-bg-base border border-white/[0.07] text-slate-200 text-xs placeholder-slate-500 focus:outline-none focus:border-accent w-36 sm:w-44 focus:w-52 transition-all" />
+                </div>
+
+                <!-- Control de escala de fuente -->
+                <div class="flex items-center bg-bg-base border border-white/[0.07] rounded-md p-0.5" title="Ajustar tamaño de letra">
+                  <button id="btnFontDec" type="button" aria-label="Reducir fuente" class="h-6 w-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-surface-elevated transition-colors text-xs font-bold">A-</button>
+                  <button id="btnFontInc" type="button" aria-label="Aumentar fuente" class="h-6 w-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-surface-elevated transition-colors text-xs font-bold">A+</button>
+                </div>
+              </div>
             </div>
 
             <div id="sentencesContainer" class="flex flex-col gap-1.5 max-h-[460px] overflow-y-auto pr-1"></div>
@@ -324,11 +358,6 @@
                 <span id="nowPlayingSentence" class="text-xs text-slate-100 truncate font-medium">Abre un archivo PDF para iniciar la lectura.</span>
               </div>
             </div>
-
-            <button id="btnOpenExportModal" type="button" disabled class="h-8 px-3 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 flex-shrink-0 disabled:opacity-40 transition-colors">
-              <span class="material-symbols-outlined text-[15px]">download</span>
-              <span>Exportar MP3</span>
-            </button>
           </div>
 
           <!-- Barra de progreso de la página -->
@@ -354,6 +383,20 @@
                   <option value="1.75" class="bg-surface">1.75x</option>
                   <option value="2.0" class="bg-surface">2.0x</option>
                 </select>
+              </div>
+
+              <!-- Temporizador de sueño (Sleep Timer) -->
+              <div class="h-8 px-2.5 rounded-lg bg-bg-base border border-white/[0.07] text-slate-200 text-xs flex items-center gap-1.5" title="Apagado automático de reproducción">
+                <span class="material-symbols-outlined text-slate-400 text-[15px]">bedtime</span>
+                <select id="sleepTimerSelect" aria-label="Temporizador de apagado" class="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer">
+                  <option value="0" class="bg-surface">Temporizador</option>
+                  <option value="15" class="bg-surface">15 min</option>
+                  <option value="30" class="bg-surface">30 min</option>
+                  <option value="45" class="bg-surface">45 min</option>
+                  <option value="60" class="bg-surface">60 min</option>
+                  <option value="chapter" class="bg-surface">Fin de capítulo</option>
+                </select>
+                <span id="sleepTimerBadge" class="hidden text-[10px] text-accent-light font-mono font-semibold ml-0.5"></span>
               </div>
             </div>
 
@@ -402,9 +445,9 @@
         <span class="text-[11px] font-mono text-slate-400 uppercase">Espacio patrocinado</span>
         <span id="rewardedAdTimer" class="px-2 py-0.5 rounded bg-surface-elevated font-mono text-xs text-slate-200">5s</span>
       </div>
-      <h3 id="rewardedAdTitle" class="font-display text-base text-slate-100 font-semibold mb-1.5">Activar exportación MP3</h3>
+      <h3 id="rewardedAdTitle" class="font-display text-base text-slate-100 font-semibold mb-1.5">Activar Voces Neuronales HD</h3>
       <p class="text-xs text-slate-400 mb-4 leading-relaxed">
-        Tras este breve anuncio tendrás 30 minutos de síntesis neuronal y descarga directa de archivos MP3.
+        Tras este breve anuncio tendrás 30 minutos de síntesis neuronal ultra-realista para tu lectura.
       </p>
       <div class="w-full h-1.5 rounded-full bg-bg-base overflow-hidden mb-4">
         <div id="rewardedAdProgress" class="h-full bg-accent transition-all" style="width: 0%"></div>
@@ -412,37 +455,6 @@
       <div class="flex justify-end gap-2">
         <button id="btnCancelAdReward" type="button" class="px-3 py-1.5 rounded-lg bg-surface-elevated text-slate-300 text-xs">Cancelar</button>
         <button id="btnClaimAdReward" type="button" disabled class="px-3.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-40">Continuar</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="exportModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
-    <div class="bg-surface border border-white/10 rounded-xl p-5 max-w-md w-full shadow-2xl">
-      <div class="flex items-center justify-between mb-2">
-        <h3 id="exportModalTitle" class="font-display text-base text-slate-100 font-semibold">Exportar en MP3</h3>
-        <button id="btnCloseExportModal" type="button" class="w-7 h-7 rounded-lg bg-surface-elevated text-slate-400 hover:text-slate-200 flex items-center justify-center">✕</button>
-      </div>
-      <p class="text-xs text-slate-400 mb-4">
-        Selecciona el rango de páginas que deseas convertir en archivo de audio MP3.
-      </p>
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div class="flex flex-col gap-1">
-          <label for="exportStartPage" class="text-[11px] text-slate-400">Desde página</label>
-          <input id="exportStartPage" type="number" min="1" value="1" class="bg-bg-base border border-white/10 rounded-lg px-3 py-1.5 text-slate-100 font-mono text-xs" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="exportEndPage" class="text-[11px] text-slate-400">Hasta página</label>
-          <input id="exportEndPage" type="number" min="1" value="1" class="bg-bg-base border border-white/10 rounded-lg px-3 py-1.5 text-slate-100 font-mono text-xs" />
-        </div>
-      </div>
-      <div class="flex gap-2 mb-4">
-        <button id="btnRangeCurrentPage" type="button" class="px-2.5 py-1 rounded-md bg-surface-elevated hover:bg-surface-hover text-slate-200 text-xs">Página actual</button>
-        <button id="btnRangeAllPages" type="button" class="px-2.5 py-1 rounded-md bg-surface-elevated hover:bg-surface-hover text-slate-200 text-xs">Todo el documento</button>
-      </div>
-      <div id="exportStatusMsg" class="hidden p-2.5 rounded-lg bg-bg-base border border-white/10 text-slate-200 text-xs mb-4"></div>
-      <div class="flex justify-end gap-2">
-        <button id="btnCancelExport" type="button" class="px-3 py-1.5 rounded-lg bg-surface-elevated text-slate-300 text-xs">Cancelar</button>
-        <button id="btnConfirmExport" type="button" class="px-3.5 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium">Descargar MP3</button>
       </div>
     </div>
   </div>

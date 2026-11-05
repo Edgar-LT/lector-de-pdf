@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -16,6 +17,7 @@ from backend.pdf_processor import CleaningOptions, SmartPDFCleaner
 from backend.security import (
     SecurityHeadersMiddleware,
     SlidingWindowRateLimiter,
+    TTLCacheStore,
     validate_pdf_bytes,
 )
 from backend.tts_engine import NeuralTTSEngine
@@ -27,7 +29,7 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 app = FastAPI(
     title="VoxPDF Studio Production API",
     description="Conversor inteligente de PDF a Audiolibro con Voces Neuronales, Limpieza de Texto y Monetización",
-    version="1.2.0",
+    version="1.3.0",
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -43,9 +45,19 @@ app.add_middleware(
 tts_engine = NeuralTTSEngine(cache_dir=BASE_DIR / ".tts_cache")
 rate_limiter = SlidingWindowRateLimiter(window_seconds=60)
 
-# Almacén en memoria con límite de documentos recientes
-DOCUMENT_STORE: dict[str, dict[str, Any]] = {}
-MAX_STORED_DOCS = 25
+# Almacén de documentos con expiración TTL y límite de memoria
+DOCUMENT_STORE = TTLCacheStore(
+    max_items=settings.DOCUMENT_STORE_MAX_ITEMS,
+    ttl_seconds=settings.DOCUMENT_STORE_TTL_SECONDS,
+)
+
+
+class CreatePdfRequest(BaseModel):
+    title: str = Field(default="Documento", max_length=200)
+    text: str = Field(..., min_length=1, max_length=500000)
+    author: str = Field(default="VoxPDF Studio", max_length=100)
+    split_by_commas: bool = True
+    remove_academic_citations: bool = True
 
 
 class SpeakRequest(BaseModel):
@@ -54,24 +66,25 @@ class SpeakRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
 
 
-class ExportRequest(BaseModel):
-    doc_id: str | None = None
-    start_page: int = Field(default=1, ge=1)
-    end_page: int = Field(default=1, ge=1)
-    voice: str = Field(default="es-MX-DaliaNeural")
-    speed: float = Field(default=1.0, ge=0.5, le=2.0)
-    custom_text: str | None = None
-    book_title: str = "Audiolibro"
-    ad_reward_token: str | None = None
-
-
 @app.get("/api/health")
 async def health_check() -> dict[str, Any]:
+    cache_files = len(list(tts_engine.cache_dir.glob("*.mp3"))) if tts_engine.cache_dir.exists() else 0
+    cache_bytes = (
+        sum(f.stat().st_size for f in tts_engine.cache_dir.glob("*.mp3"))
+        if tts_engine.cache_dir.exists()
+        else 0
+    )
     return {
         "status": "ok",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "engine": "edge-tts + PyMuPDF",
         "max_pdf_size_mb": settings.MAX_PDF_SIZE_MB,
+        "max_pdf_pages": settings.MAX_PDF_PAGES,
+        "cache_stats": {
+            "cached_mp3_files": cache_files,
+            "cache_size_mb": round(cache_bytes / (1024 * 1024), 2),
+        },
+        "active_stored_docs": len(DOCUMENT_STORE),
     }
 
 
@@ -88,6 +101,7 @@ async def parse_pdf(
     remove_page_numbers: bool = Form(True),
     fix_line_breaks: bool = Form(True),
     split_by_commas: bool = Form(True),
+    remove_academic_citations: bool = Form(True),
 ) -> dict[str, Any]:
     rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
 
@@ -96,26 +110,59 @@ async def parse_pdf(
         raise HTTPException(status_code=400, detail="El archivo debe ser un documento PDF (.pdf).")
 
     pdf_bytes = await file.read()
-    validate_pdf_bytes(pdf_bytes, max_size_mb=settings.MAX_PDF_SIZE_MB)
+    validate_pdf_bytes(pdf_bytes, max_size_mb=settings.MAX_PDF_SIZE_MB, max_pages=settings.MAX_PDF_PAGES)
 
     options = CleaningOptions(
         remove_headers_footers=remove_headers_footers,
         remove_page_numbers=remove_page_numbers,
         fix_line_breaks=fix_line_breaks,
         split_by_commas=split_by_commas,
+        remove_academic_citations=remove_academic_citations,
     )
     cleaner = SmartPDFCleaner(options=options)
     try:
-        parsed = cleaner.parse_document(pdf_bytes=pdf_bytes, filename=filename)
+        parsed = await run_in_threadpool(cleaner.parse_document, pdf_bytes=pdf_bytes, filename=filename)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"No se pudo procesar el PDF: {exc}") from exc
 
-    if len(DOCUMENT_STORE) >= MAX_STORED_DOCS:
-        oldest_key = next(iter(DOCUMENT_STORE))
-        DOCUMENT_STORE.pop(oldest_key, None)
-
     DOCUMENT_STORE[parsed["doc_id"]] = parsed
     return parsed
+
+
+@app.post("/api/pdf/create-from-text")
+async def create_pdf_from_text(request: Request, payload: CreatePdfRequest) -> dict[str, Any]:
+    rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
+    text_content = payload.text.strip()
+    if not text_content:
+        raise HTTPException(status_code=400, detail="El contenido del texto no puede estar vacío.")
+
+    title = payload.title.strip() or "Documento"
+    safe_filename = re.sub(r"[^\w\s-]", "", title).strip() or "documento"
+    safe_filename = f"{safe_filename[:40]}.pdf"
+
+    pdf_bytes = await run_in_threadpool(
+        SmartPDFCleaner.create_pdf_from_text,
+        title=title,
+        text=text_content,
+        author=payload.author,
+    )
+
+    cleaner = SmartPDFCleaner(
+        options=CleaningOptions(
+            split_by_commas=payload.split_by_commas,
+            remove_academic_citations=payload.remove_academic_citations,
+        )
+    )
+    parsed = await run_in_threadpool(cleaner.parse_document, pdf_bytes=pdf_bytes, filename=safe_filename)
+
+    DOCUMENT_STORE[parsed["doc_id"]] = parsed
+
+    import base64
+    return {
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        "filename": safe_filename,
+        "parsed": parsed,
+    }
 
 
 @app.post("/api/tts/speak")
@@ -136,61 +183,6 @@ async def speak_sentence(request: Request, req: SpeakRequest) -> FileResponse:
         path=str(audio_path),
         media_type="audio/mpeg",
         filename="fragmento.mp3",
-    )
-
-
-@app.post("/api/tts/export")
-async def export_audiobook(request: Request, req: ExportRequest) -> FileResponse:
-    rate_limiter.check(request, bucket="export", max_requests=settings.RATE_LIMIT_EXPORT_PER_MIN)
-
-    safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", req.book_title).strip("_") or "Audiolibro"
-
-    if req.custom_text and req.custom_text.strip():
-        try:
-            audio_path = await tts_engine.synthesize_to_file(
-                text=req.custom_text.strip(),
-                voice=req.voice,
-                speed=req.speed,
-                max_cache_files=settings.TTS_CACHE_MAX_FILES,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Error al exportar audio: {exc}") from exc
-
-        return FileResponse(
-            path=str(audio_path),
-            media_type="audio/mpeg",
-            filename=f"{safe_title}_p{req.start_page}-{req.end_page}.mp3",
-        )
-
-    if not req.doc_id or req.doc_id not in DOCUMENT_STORE:
-        raise HTTPException(
-            status_code=404,
-            detail="Documento no encontrado en sesión. Vuelve a cargar el PDF o envía el texto.",
-        )
-
-    doc_data = DOCUMENT_STORE[req.doc_id]
-    pages = doc_data.get("pages", [])
-    start_p = max(1, min(req.start_page, len(pages)))
-    end_p = max(start_p, min(req.end_page, len(pages)))
-
-    try:
-        audio_path = await tts_engine.export_audiobook_mp3(
-            pages=pages,
-            start_page=start_p,
-            end_page=end_p,
-            voice=req.voice,
-            speed=req.speed,
-            book_title=safe_title,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error al generar audiolibro MP3: {exc}") from exc
-
-    return FileResponse(
-        path=str(audio_path),
-        media_type="audio/mpeg",
-        filename=f"{safe_title}_Pag_{start_p}_a_{end_p}.mp3",
     )
 
 

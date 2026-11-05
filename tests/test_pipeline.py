@@ -102,14 +102,23 @@ def test_production_security_pdf_validation_and_rate_limiter(tmp_path):
     """Verifica el rechazo de archivos sin firma binaria %PDF-, el Rate Limiter y la purga LRU de caché."""
     rate_limiter.reset()
 
-    # 1. Subir un archivo falso que termina en .pdf pero no tiene firma %PDF-
-    fake_pdf = b"ESTE NO ES UN ARCHIVO PDF REAL"
+    # 1. Subir un archivo falso que termina en .pdf pero no tiene firma %PDF- (mayor a 32 bytes)
+    fake_pdf = b"ESTE NO ES UN ARCHIVO PDF REAL - TEXTO DE RELLENO MAYOR A 32 BYTES"
     bad_res = client.post(
         "/api/pdf/parse",
         files={"file": ("falso.pdf", fake_pdf, "application/pdf")},
     )
     assert bad_res.status_code == 400
     assert "firma binaria PDF" in bad_res.json()["detail"]
+
+    # 1b. Subir archivo demasiado pequeño (< 32 bytes)
+    tiny_pdf = b"%PDF-1.4 corto"
+    tiny_res = client.post(
+        "/api/pdf/parse",
+        files={"file": ("tiny.pdf", tiny_pdf, "application/pdf")},
+    )
+    assert tiny_res.status_code == 400
+    assert "demasiado pequeño" in tiny_res.json()["detail"]
 
     # 2. Verificar auto-purga de caché de audio (LRU)
     temp_engine = NeuralTTSEngine(cache_dir=tmp_path / "cache_test")
@@ -121,11 +130,11 @@ def test_production_security_pdf_validation_and_rate_limiter(tmp_path):
     assert len(list(temp_engine.cache_dir.glob("*.mp3"))) == 2
 
 
-def test_neural_tts_speak_and_export(tmp_path, monkeypatch):
-    """Verifica el flujo completo de análisis PDF, síntesis de audio y exportación de audiolibro MP3."""
+def test_neural_tts_speak(tmp_path, monkeypatch):
+    """Verifica el flujo de análisis PDF y síntesis de audio neuronal por fragmentos."""
     rate_limiter.reset()
     if os.environ.get("CI") == "true":
-        async def _mock_synth(text: str, voice: str = "es-MX-DaliaNeural", speed: float = 1.0, max_cache_files: int = 150) -> Path:
+        async def _mock_synth(text: str, voice: str = "es-MX-DaliaNeural", speed: float = 1.0, max_cache_files: int = 150, max_cache_size_mb: int = 300) -> Path:
             dummy_mp3 = tmp_path / "mock_audio.mp3"
             dummy_mp3.write_bytes(b"ID3" + b"\x00" * 2048)
             return dummy_mp3
@@ -144,7 +153,7 @@ def test_neural_tts_speak_and_export(tmp_path, monkeypatch):
             },
         )
     assert parse_res.status_code == 200
-    doc_id = parse_res.json()["doc_id"]
+    assert "doc_id" in parse_res.json()
 
     speak_res = client.post(
         "/api/tts/speak",
@@ -158,17 +167,86 @@ def test_neural_tts_speak_and_export(tmp_path, monkeypatch):
     assert speak_res.headers["content-type"].startswith("audio/mpeg")
     assert len(speak_res.content) > 1000
 
-    export_res = client.post(
-        "/api/tts/export",
-        json={
-            "doc_id": doc_id,
-            "start_page": 1,
-            "end_page": 1,
-            "voice": "es-MX-JorgeNeural",
-            "speed": 1.25,
-            "book_title": "Manual Mecatronica",
-        },
+
+def test_citation_cleaning_and_kerning_despacing(tmp_path):
+    """Verifica la eliminación de citas bibliográficas tipo [1, 28] y la normalización de kerning tipográfico."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    # Título tipográfico espaciado y citas entre corchetes
+    page.insert_text(fitz.Point(55, 60), "A R C O  I :  L A   F O R J A", fontsize=14)
+    rect = fitz.Rect(55, 100, 540, 300)
+    page.insert_textbox(
+        rect,
+        "Los modelos basados en Transformers [14, 21, 28] superan a los recurrentes [1] en traducción neuronal.",
+        fontsize=11.5,
     )
-    assert export_res.status_code == 200
-    assert export_res.headers["content-type"].startswith("audio/mpeg")
-    assert len(export_res.content) > 1000
+    pdf_path = tmp_path / "test_citations.pdf"
+    doc.save(str(pdf_path))
+    doc.close()
+
+    cleaner = SmartPDFCleaner(
+        options=CleaningOptions(
+            remove_academic_citations=True,
+            fix_line_breaks=True,
+        )
+    )
+    result = cleaner.parse_document(pdf_bytes=pdf_path.read_bytes(), filename="test_citations.pdf")
+    page_text = " ".join(s["text"] for s in result["pages"][0]["sentences"])
+
+    # Comprobar que las citas numéricas se eliminaron
+    assert "[14, 21, 28]" not in page_text
+    assert "[1]" not in page_text
+    assert "superan a los recurrentes en traducción neuronal" in page_text
+    # Comprobar que el espaciado de título se normalizó
+    assert "ARCO I : LA FORJA" in page_text
+
+
+def test_heuristic_chapter_detection_when_no_toc(tmp_path):
+    """Verifica que documentos sin tabla de contenidos (TOC) detecten capítulos heurísticamente."""
+    doc = fitz.open()
+    # Página 1: Capítulo 1
+    p1 = doc.new_page(width=595, height=842)
+    p1.insert_text(fitz.Point(55, 60), "Capítulo 1: El Despertar de la IA", fontsize=14)
+    p1.insert_text(fitz.Point(55, 100), "Texto del primer capítulo.", fontsize=11)
+    # Página 2: Sin título de capítulo
+    p2 = doc.new_page(width=595, height=842)
+    p2.insert_text(fitz.Point(55, 60), "Continuación de la trama en la página dos.", fontsize=11)
+    # Página 3: Capítulo 2
+    p3 = doc.new_page(width=595, height=842)
+    p3.insert_text(fitz.Point(55, 60), "Capítulo 2: La Gran Convergencia", fontsize=14)
+    p3.insert_text(fitz.Point(55, 100), "Texto del segundo capítulo.", fontsize=11)
+
+    pdf_path = tmp_path / "test_heuristic_toc.pdf"
+    # Guardar SIN doc.set_toc(...)
+    doc.save(str(pdf_path))
+    doc.close()
+
+    cleaner = SmartPDFCleaner()
+    result = cleaner.parse_document(pdf_bytes=pdf_path.read_bytes(), filename="test_heuristic_toc.pdf")
+    chapters = result.get("chapters", [])
+    assert len(chapters) >= 2
+    assert any("Capítulo 1" in c["title"] for c in chapters)
+    assert any("Capítulo 2" in c["title"] for c in chapters)
+
+
+def test_ttl_cache_store_eviction_and_expiry():
+    """Verifica que TTLCacheStore respete la expiración por tiempo y el límite máximo de elementos."""
+    from backend.security import TTLCacheStore
+
+    cache = TTLCacheStore(max_items=3, ttl_seconds=1)
+    cache.set("a", 10)
+    cache.set("b", 20)
+    cache.set("c", 30)
+    assert len(cache) == 3
+    assert cache.get("a") == 10
+
+    # Agregar el 4to elemento debe purgar el más antiguo ("a")
+    cache.set("d", 40)
+    assert len(cache) == 3
+    assert cache.get("a") is None
+    assert cache.get("d") == 40
+
+    # Simular paso del tiempo expirando entradas
+    cache._data["b"] = (1.0, 20)  # forzar expiración en el pasado
+    assert cache.get("b") is None
+    assert "b" not in cache

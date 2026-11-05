@@ -35,6 +35,7 @@ class CleaningOptions:
     remove_page_numbers: bool = True
     fix_line_breaks: bool = True
     split_by_commas: bool = True
+    remove_academic_citations: bool = True
 
 
 @dataclass
@@ -111,10 +112,22 @@ class SmartPDFCleaner:
             # Reemplazar saltos de línea simples por espacios
             cleaned = re.sub(r"\s*\n+\s*", " ", cleaned)
 
+        # Normalizar letras espaciadas tipográficas (ej. "A R C O  I :  L A   F O R J A" -> "ARCO I : LA FORJA")
+        # Se ejecuta antes de comprimir espacios para respetar los 2+ espacios entre palabras completas
+        cleaned = re.sub(
+            r"(?<=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b) (?=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)", "", cleaned
+        )
+
+        # Omitir citas académicas entre corchetes (ej. "[1]", "[14, 21]", "[2-5]")
+        if self.options.remove_academic_citations:
+            cleaned = re.sub(r"\s*\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]", "", cleaned)
+
         # Limpiar espacios múltiples y caracteres de control
         cleaned = re.sub(r"[ \t\r\f\v]+", " ", cleaned)
         # Reemplazar viñetas sueltas al inicio para una pausa natural
         cleaned = re.sub(r"^\s*[•●▪▸►]\s*", "", cleaned)
+
+        cleaned = re.sub(r"[ \t\r\f\v]+", " ", cleaned)
         return cleaned.strip()
 
     @classmethod
@@ -196,6 +209,7 @@ class SmartPDFCleaner:
         pages_output: list[dict[str, Any]] = []
         removed_headers_count = 0
         removed_page_numbers_count = 0
+        removed_citations_count = 0
         total_sentences = 0
         total_words = 0
 
@@ -223,6 +237,11 @@ class SmartPDFCleaner:
                     if sig in repeated_margins:
                         removed_headers_count += 1
                         continue
+
+                if self.options.remove_academic_citations:
+                    found_citations = re.findall(r"\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]", raw_text)
+                    if found_citations:
+                        removed_citations_count += len(found_citations)
 
                 cleaned_para = self.clean_paragraph_text(raw_text)
                 if not cleaned_para:
@@ -288,23 +307,24 @@ class SmartPDFCleaner:
                         }
                     )
         else:
-            # Inferir capítulos buscando encabezados tipo "Capítulo", "Sección", "1.", etc. al inicio de página
+            # Inferir capítulos buscando encabezados tipo "Capítulo", "Acto", "Sección", "Parte", etc.
             heading_pattern = re.compile(
-                r"^(?:cap[íi]tulo|chapter|secci[óo]n|parte|unidad|m[óo]dulo|\d+(?:\.\d+)*\s+[A-ZÁÉÍÓÚÑ])",
+                r"^(?:cap[íi]tulo|chapter|acto|secci[óo]n|parte|unidad|m[óo]dulo|libro|arco|tema|\d+(?:\.\d+)*\s+[A-ZÁÉÍÓÚÑ])",
                 re.IGNORECASE,
             )
             for p in pages_output:
-                if p["sentences"]:
-                    first_s = p["sentences"][0]["text"]
-                    if len(first_s) <= 90 and heading_pattern.match(first_s):
-                        chapters.append(
-                            {
-                                "id": f"ch_p{p['page_number']}",
-                                "level": 1,
-                                "title": first_s,
-                                "page_number": p["page_number"],
-                            }
-                        )
+                for s_obj in p["sentences"][:4]:
+                    s_text = s_obj["text"].strip().rstrip(":,.-")
+                    if 3 <= len(s_text) <= 90 and heading_pattern.match(s_text):
+                        if not any(c["page_number"] == p["page_number"] and c["title"] == s_text for c in chapters):
+                            chapters.append(
+                                {
+                                    "id": f"ch_p{p['page_number']}_{len(chapters)}",
+                                    "level": 1,
+                                    "title": s_text,
+                                    "page_number": p["page_number"],
+                                }
+                            )
             if not chapters and total_pages > 0:
                 chapters.append(
                     {
@@ -317,6 +337,7 @@ class SmartPDFCleaner:
 
         doc.close()
 
+        has_scanned_warning = bool(total_pages > 0 and total_words < 5)
         estimated_minutes = round(total_words / 155, 1) if total_words else 0.0
 
         return {
@@ -327,12 +348,141 @@ class SmartPDFCleaner:
             "total_pages": total_pages,
             "total_sentences": total_sentences,
             "total_words": total_words,
+            "is_scanned_pdf": has_scanned_warning,
             "estimated_duration_minutes": estimated_minutes,
             "cleaning_stats": {
                 "removed_headers_footers": removed_headers_count,
                 "removed_page_numbers": removed_page_numbers_count,
+                "removed_citations": removed_citations_count,
                 "fix_line_breaks": self.options.fix_line_breaks,
             },
             "chapters": chapters,
             "pages": pages_output,
         }
+
+    @classmethod
+    def create_pdf_from_text(
+        cls, title: str, text: str, author: str = ""
+    ) -> bytes:
+        """Genera un archivo PDF maquetado profesionalmente a partir de texto plano."""
+        doc = fitz.open()
+        page_width, page_height = 595.0, 842.0  # Tamaño estándar A4
+        margin_x, margin_top, margin_bottom = 54.0, 54.0, 54.0
+
+        clean_title = (title or "Documento").strip()
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = ["(Documento sin contenido)"]
+
+        current_page = doc.new_page(width=page_width, height=page_height)
+        page_num = 1
+        y_cursor = margin_top
+
+        # Portada / Título en la primera página
+        current_page.insert_text(
+            fitz.Point(margin_x, y_cursor + 18),
+            clean_title,
+            fontsize=16,
+            fontname="helv",
+            color=(0.12, 0.12, 0.18),
+        )
+        y_cursor += 30
+
+        if author:
+            current_page.insert_text(
+                fitz.Point(margin_x, y_cursor),
+                f"Autor: {author}",
+                fontsize=9.5,
+                fontname="helv",
+                color=(0.4, 0.4, 0.45),
+            )
+            y_cursor += 18
+
+        current_page.draw_line(
+            fitz.Point(margin_x, y_cursor),
+            fitz.Point(page_width - margin_x, y_cursor),
+            color=(0.8, 0.8, 0.85),
+            width=0.8,
+        )
+        y_cursor += 16
+
+        heading_regex = re.compile(
+            r"^(?:cap[íi]tulo|cap\.|acto|parte|libro|secci[óo]n|cap\s+\d+|arco)\b",
+            re.IGNORECASE,
+        )
+        toc_entries: list[list[Any]] = []
+
+        for p_text in paragraphs:
+            is_heading = bool(heading_regex.match(p_text)) or (len(p_text) < 50 and p_text.isupper())
+            font_size = 13.0 if is_heading else 10.5
+            font_name = "helv"
+
+            if is_heading:
+                toc_entries.append([1, p_text[:60], page_num])
+
+            rect = fitz.Rect(
+                margin_x,
+                y_cursor,
+                page_width - margin_x,
+                page_height - margin_bottom,
+            )
+            remaining = current_page.insert_textbox(
+                rect,
+                p_text,
+                fontsize=font_size,
+                fontname=font_name,
+                color=(0.08, 0.12, 0.28) if is_heading else (0.15, 0.15, 0.18),
+            )
+
+            if remaining < 0:
+                # Si el texto no cabe, paginar
+                current_page.insert_text(
+                    fitz.Point(page_width / 2 - 15, page_height - 24),
+                    f"{page_num}",
+                    fontsize=8.5,
+                    color=(0.5, 0.5, 0.5),
+                )
+                current_page = doc.new_page(width=page_width, height=page_height)
+                page_num += 1
+                y_cursor = margin_top
+
+                rect = fitz.Rect(
+                    margin_x,
+                    y_cursor,
+                    page_width - margin_x,
+                    page_height - margin_bottom,
+                )
+                current_page.insert_textbox(
+                    rect,
+                    p_text,
+                    fontsize=font_size,
+                    fontname=font_name,
+                    color=(0.08, 0.12, 0.28) if is_heading else (0.15, 0.15, 0.18),
+                )
+
+            approx_lines = max(1, len(p_text) // 75 + 1)
+            y_cursor += approx_lines * (font_size * 1.35) + (10 if is_heading else 6)
+            if y_cursor > page_height - margin_bottom - 36:
+                current_page.insert_text(
+                    fitz.Point(page_width / 2 - 15, page_height - 24),
+                    f"{page_num}",
+                    fontsize=8.5,
+                    color=(0.5, 0.5, 0.5),
+                )
+                current_page = doc.new_page(width=page_width, height=page_height)
+                page_num += 1
+                y_cursor = margin_top
+
+        current_page.insert_text(
+            fitz.Point(page_width / 2 - 15, page_height - 24),
+            f"{page_num}",
+            fontsize=8.5,
+            color=(0.5, 0.5, 0.5),
+        )
+
+        if toc_entries:
+            doc.set_toc(toc_entries)
+
+        pdf_bytes = doc.tobytes()
+        doc.close()
+        return pdf_bytes

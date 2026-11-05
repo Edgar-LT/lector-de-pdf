@@ -70,13 +70,32 @@ NEURAL_VOICES: list[dict[str, str]] = [
 
 
 class NeuralTTSEngine:
-    """Motor de síntesis de voz neuronal basado en edge-tts con caché en disco."""
+    """Motor de síntesis de voz neuronal basado en edge-tts con caché en disco y Circuit Breaker."""
 
     def __init__(self, cache_dir: Path | str | None = None):
         if cache_dir is None:
             cache_dir = Path(__file__).resolve().parent.parent / ".tts_cache"
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._consecutive_failures: int = 0
+        self._circuit_open_until: float = 0.0
+        self._prune_call_counter: int = 0
+
+    @property
+    def is_circuit_open(self) -> bool:
+        """Determina si el Circuit Breaker está abierto tras fallos reiterados en el servicio upstream."""
+        import time
+        return time.time() < self._circuit_open_until
+
+    def record_success(self) -> None:
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
+    def record_failure(self, threshold: int = 4, cooldown_seconds: float = 30.0) -> None:
+        import time
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= threshold:
+            self._circuit_open_until = time.time() + cooldown_seconds
 
     @staticmethod
     def get_available_voices() -> list[dict[str, str]]:
@@ -97,20 +116,35 @@ class NeuralTTSEngine:
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
-    def prune_cache(self, max_files: int = 150) -> int:
-        """Elimina los archivos MP3 más antiguos cuando la caché supera max_files (evicción LRU)."""
-        if max_files <= 0 or not self.cache_dir.exists():
+    def maybe_prune_cache(self, max_files: int = 150, max_size_mb: int = 300, interval: int = 25) -> int:
+        """Invoca la purga LRU de manera throttled (cada N llamadas) para proteger el I/O del disco bajo alta concurrencia."""
+        self._prune_call_counter += 1
+        if self._prune_call_counter % interval == 0:
+            return self.prune_cache(max_files=max_files, max_size_mb=max_size_mb)
+        return 0
+
+    def prune_cache(self, max_files: int = 150, max_size_mb: int = 300) -> int:
+        """Elimina los archivos MP3 más antiguos cuando la caché supera max_files o max_size_mb (evicción LRU por cuota)."""
+        if (max_files <= 0 and max_size_mb <= 0) or not self.cache_dir.exists():
             return 0
         mp3_files = sorted(
             self.cache_dir.glob("*.mp3"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
+        max_bytes = max_size_mb * 1024 * 1024 if max_size_mb > 0 else float("inf")
+        total_bytes = 0
         removed = 0
-        for old_file in mp3_files[max_files:]:
+
+        for idx, old_file in enumerate(mp3_files):
             try:
-                old_file.unlink(missing_ok=True)
-                removed += 1
+                size = old_file.stat().st_size
+                # Si excede el conteo máximo de archivos o el tamaño acumulado supera la cuota
+                if (max_files > 0 and idx >= max_files) or (total_bytes + size > max_bytes):
+                    old_file.unlink(missing_ok=True)
+                    removed += 1
+                else:
+                    total_bytes += size
             except OSError:
                 pass
         return removed
@@ -121,6 +155,7 @@ class NeuralTTSEngine:
         voice: str = "es-MX-DaliaNeural",
         speed: float = 1.0,
         max_cache_files: int = 150,
+        max_cache_size_mb: int = 300,
     ) -> Path:
         """Sintetiza un texto a archivo MP3 usando caché si ya fue generado."""
         cleaned_text = re.sub(r"\s*\n+\s*", " ", text.strip())
@@ -135,6 +170,9 @@ class NeuralTTSEngine:
         if cache_path.exists() and cache_path.stat().st_size > 128:
             return cache_path
 
+        if self.is_circuit_open:
+            raise RuntimeError("Circuit breaker abierto: el servicio TTS externo no está respondiendo temporalmente.")
+
         rate_str = self.speed_to_rate_str(speed)
         last_exc: Exception | None = None
         for attempt in range(3):
@@ -146,40 +184,14 @@ class NeuralTTSEngine:
                 )
                 await communicate.save(str(cache_path))
                 if cache_path.exists() and cache_path.stat().st_size > 128:
-                    self.prune_cache(max_files=max_cache_files)
+                    self.record_success()
+                    self.maybe_prune_cache(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
                     return cache_path
             except Exception as exc:
                 last_exc = exc
                 await asyncio.sleep(0.35 * (attempt + 1))
 
+        self.record_failure()
         if last_exc:
             raise last_exc
         raise RuntimeError("No se pudo generar el archivo de audio neuronal.")
-
-    async def export_audiobook_mp3(
-        self,
-        pages: list[dict[str, Any]],
-        start_page: int,
-        end_page: int,
-        voice: str = "es-MX-DaliaNeural",
-        speed: float = 1.0,
-        book_title: str = "Audiolibro",
-    ) -> Path:
-        """Genera un archivo MP3 continuo para un rango de páginas del documento."""
-        selected_chunks: list[str] = []
-        for page in pages:
-            p_num = int(page.get("page_number", 0))
-            if start_page <= p_num <= end_page:
-                paragraphs = page.get("paragraphs", [])
-                if paragraphs:
-                    selected_chunks.append("\n\n".join(paragraphs))
-
-        full_script = "\n\n".join(selected_chunks).strip()
-        if not full_script:
-            raise ValueError("El rango de páginas seleccionado no contiene texto legible.")
-
-        return await self.synthesize_to_file(
-            text=full_script,
-            voice=voice,
-            speed=speed,
-        )
