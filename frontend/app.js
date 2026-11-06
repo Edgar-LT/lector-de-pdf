@@ -757,6 +757,27 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, 
   }
 }
 
+function createChapterItemContent(chapter, index) {
+  const left = document.createElement("div");
+  left.className = "flex items-center gap-2.5 min-w-0";
+
+  const indexLabel = document.createElement("span");
+  indexLabel.className = "chapter-idx font-mono text-[11px] text-slate-500 flex-shrink-0";
+  indexLabel.textContent = String(index + 1).padStart(2, "0");
+
+  const title = document.createElement("span");
+  title.className = "chapter-title-text text-xs text-slate-200 font-medium truncate";
+  title.textContent = chapter.title; // texto plano: el título viene del PDF y nunca debe interpretarse como HTML
+
+  left.append(indexLabel, title);
+
+  const pageLabel = document.createElement("span");
+  pageLabel.className = "font-mono text-[11px] text-slate-400 flex-shrink-0";
+  pageLabel.textContent = `p. ${chapter.page_number}`;
+
+  return [left, pageLabel];
+}
+
 function renderChaptersAndPages() {
   const { chapters, total_pages } = state.docData;
 
@@ -776,13 +797,7 @@ function renderChaptersAndPages() {
     li.dataset.endPage = endPage;
     li.dataset.title = ch.title;
 
-    li.innerHTML = `
-      <div class="flex items-center gap-2.5 min-w-0">
-        <span class="chapter-idx font-mono text-[11px] text-slate-500 flex-shrink-0">${String(idx + 1).padStart(2, "0")}</span>
-        <span class="chapter-title-text text-xs text-slate-200 font-medium truncate">${ch.title}</span>
-      </div>
-      <span class="font-mono text-[11px] text-slate-400 flex-shrink-0">p. ${ch.page_number}</span>
-    `;
+    li.replaceChildren(...createChapterItemContent(ch, idx));
 
     li.addEventListener("click", () => {
       goToPage(ch.page_number, 0, true);

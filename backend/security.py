@@ -37,6 +37,10 @@ DANGEROUS_PDF_TOKENS: list[tuple[bytes, str]] = [
 ]
 
 
+# Clave de bucket para clientes sin IP identificable (no debe compartirse con 127.0.0.1)
+UNKNOWN_CLIENT_KEY = "unknown"
+
+
 def sanitize_and_validate_filename(filename: str) -> str:
     """Valida y sanitiza el nombre de archivo para prevenir Path Traversal, caracteres nulos y doble extensión maliciosa."""
     if not filename or not isinstance(filename, str):
@@ -138,12 +142,15 @@ class SlidingWindowRateLimiter:
 
     @staticmethod
     def get_client_ip(request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """IP del cliente según el scope ASGI.
+
+        No se lee X-Forwarded-For aquí: cualquier cliente puede fijarlo. Detrás de un proxy,
+        uvicorn (--proxy-headers + FORWARDED_ALLOW_IPS) ya normaliza request.client.host
+        recorriendo la cabecera de derecha a izquierda solo a través de proxies de confianza.
+        """
         if request.client and request.client.host:
             return request.client.host
-        return "127.0.0.1"
+        return UNKNOWN_CLIENT_KEY
 
     def check(self, request: Request, bucket: str, max_requests: int) -> None:
         now = time.monotonic()
