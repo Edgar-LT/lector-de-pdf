@@ -9,9 +9,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from backend.app import app, rate_limiter
+from backend.app import app, rate_limiter, tts_engine
 from backend.config import settings
 from backend.services.error_handler import exception_to_http
+from backend.tts_engine import TtsUnavailableError
 
 EXTRA_REQUESTS_OVER_LIMIT = 3
 
@@ -110,3 +111,36 @@ def test_rate_limit_cannot_be_bypassed_with_spoofed_x_forwarded_for() -> None:
     )
 
     assert codes == [200] * limit + [429] * EXTRA_REQUESTS_OVER_LIMIT
+
+
+def test_parse_endpoint_rejects_launch_action_inside_compressed_object_stream() -> None:
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 100), "Documento de prueba.")
+    page.insert_link({"kind": fitz.LINK_LAUNCH, "from": fitz.Rect(0, 0, 50, 50), "file": "calc.exe"})
+    compressed_pdf = doc.tobytes(garbage=4, deflate=True, use_objstms=1)
+    doc.close()
+
+    assert b"/Launch" not in compressed_pdf  # invisible a nivel de bytes crudos
+
+    client = TestClient(app)
+    res = client.post(
+        "/api/pdf/parse",
+        files={"file": ("launch_objstm.pdf", compressed_pdf, "application/pdf")},
+    )
+    assert res.status_code == 400
+    assert "/Launch" in res.json()["detail"]
+
+
+def test_tts_speak_returns_generic_503_when_service_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fail_unavailable(*args, **kwargs):
+        raise TtsUnavailableError("detalle interno sensible del proveedor")
+
+    monkeypatch.setattr(tts_engine, "synthesize_to_file", _fail_unavailable)
+    client = TestClient(app)
+    res = client.post("/api/tts/speak", json={"text": "Hola mundo", "voice": "es-MX-DaliaNeural", "speed": 1.0})
+
+    assert res.status_code == 503
+    assert res.headers.get("retry-after") == "10"
+    assert "detalle interno sensible" not in res.json()["detail"]
+

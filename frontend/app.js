@@ -6,7 +6,7 @@
 
 if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    "./vendor/pdfjs/pdf.worker.min.js";
 }
 
 const LOCAL_DB_NAME = "voxpdf_local_db";
@@ -546,7 +546,7 @@ async function handleUploadFile(file, keepPosition = false) {
 }
 
 async function parsePdfClientSide(arrayBuffer, filename, options) {
-  const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
+  const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0), isEvalSupported: false });
   const pdf = await loadingTask.promise;
   const totalPages = pdf.numPages;
 
@@ -701,7 +701,7 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, 
 
   if (window.pdfjsLib && pdfArrayBuffer) {
     try {
-      const loadingTask = window.pdfjsLib.getDocument({ data: pdfArrayBuffer.slice(0) });
+      const loadingTask = window.pdfjsLib.getDocument({ data: pdfArrayBuffer.slice(0), isEvalSupported: false });
       state.pdfJsDoc = await loadingTask.promise;
     } catch (e) {
       console.warn("Advertencia PDF.js:", e);

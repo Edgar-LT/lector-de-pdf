@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,14 @@ from backend.pdf_processor import CleaningOptions, SmartPDFCleaner
 from backend.security import (
     SecurityHeadersMiddleware,
     SlidingWindowRateLimiter,
-    TTLCacheStore,
     sanitize_and_validate_filename,
     validate_pdf_bytes,
 )
 from backend.services.error_handler import exception_to_http
 from backend.services.pdf_processing_service import PdfProcessingService
-from backend.tts_engine import NeuralTTSEngine
+from backend.tts_engine import NeuralTTSEngine, TtsUnavailableError
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_CHUNK_SIZE_BYTES = 64 * 1024
 BYTES_PER_MB = 1024 * 1024
@@ -51,12 +53,6 @@ app.add_middleware(
 tts_engine = NeuralTTSEngine(cache_dir=BASE_DIR / ".tts_cache")
 rate_limiter = SlidingWindowRateLimiter(window_seconds=60)
 
-# Almacén de documentos con expiración TTL y límite de memoria
-DOCUMENT_STORE = TTLCacheStore(
-    max_items=settings.DOCUMENT_STORE_MAX_ITEMS,
-    ttl_seconds=settings.DOCUMENT_STORE_TTL_SECONDS,
-)
-
 
 class CreatePdfRequest(BaseModel):
     title: str = Field(default="Documento", max_length=200)
@@ -74,12 +70,8 @@ class SpeakRequest(BaseModel):
 
 @app.get("/api/health")
 async def health_check() -> dict[str, Any]:
-    cache_files = len(list(tts_engine.cache_dir.glob("*.mp3"))) if tts_engine.cache_dir.exists() else 0
-    cache_bytes = (
-        sum(f.stat().st_size for f in tts_engine.cache_dir.glob("*.mp3"))
-        if tts_engine.cache_dir.exists()
-        else 0
-    )
+    mp3_files = list(tts_engine.cache_dir.glob("*.mp3")) if tts_engine.cache_dir.exists() else []
+    cache_bytes = sum(f.stat().st_size for f in mp3_files)
     return {
         "status": "ok",
         "version": "1.3.0",
@@ -87,10 +79,9 @@ async def health_check() -> dict[str, Any]:
         "max_pdf_size_mb": settings.MAX_PDF_SIZE_MB,
         "max_pdf_pages": settings.MAX_PDF_PAGES,
         "cache_stats": {
-            "cached_mp3_files": cache_files,
+            "cached_mp3_files": len(mp3_files),
             "cache_size_mb": round(cache_bytes / (1024 * 1024), 2),
         },
-        "active_stored_docs": len(DOCUMENT_STORE),
     }
 
 
@@ -143,7 +134,6 @@ async def parse_pdf(
         remove_academic_citations=remove_academic_citations,
     )
     parsed = await _parse_pdf_in_threadpool(PdfProcessingService(options=options), pdf_bytes, filename)
-    DOCUMENT_STORE[parsed["doc_id"]] = parsed
     return parsed
 
 
@@ -173,8 +163,6 @@ async def create_pdf_from_text(request: Request, payload: CreatePdfRequest) -> d
     )
     parsed = await run_in_threadpool(cleaner.parse_document, pdf_bytes=pdf_bytes, filename=safe_filename)
 
-    DOCUMENT_STORE[parsed["doc_id"]] = parsed
-
     return {
         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
         "filename": safe_filename,
@@ -192,9 +180,18 @@ async def speak_sentence(request: Request, req: SpeakRequest) -> FileResponse:
             voice=req.voice,
             speed=req.speed,
             max_cache_files=settings.TTS_CACHE_MAX_FILES,
+            max_cache_size_mb=settings.TTS_CACHE_MAX_SIZE_MB,
         )
+    except TtsUnavailableError as exc:
+        logger.warning("Servicio TTS no disponible temporalmente: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="El servicio de voz neuronal no está disponible temporalmente. Reintenta en unos segundos.",
+            headers={"Retry-After": "10"},
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error al sintetizar audio neuronal: {exc}") from exc
+        logger.exception("Fallo inesperado en /api/tts/speak")
+        raise HTTPException(status_code=502, detail="Error al sintetizar el audio.") from exc
 
     return FileResponse(
         path=str(audio_path),
@@ -205,11 +202,19 @@ async def speak_sentence(request: Request, req: SpeakRequest) -> FileResponse:
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+    vendor_dir = FRONTEND_DIR / "vendor"
+    if vendor_dir.exists():
+        app.mount("/vendor", StaticFiles(directory=str(vendor_dir)), name="vendor")
 
 
 @app.get("/")
 async def serve_index() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+@app.get("/tailwind.css")
+async def serve_tailwind_css() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "tailwind.css"), media_type="text/css")
 
 
 @app.get("/styles.css")

@@ -13,8 +13,6 @@ class Settings:
     RATE_LIMIT_TTS_PER_MIN: int = int(os.getenv("RATE_LIMIT_TTS_PER_MIN", "90"))
     TTS_CACHE_MAX_FILES: int = int(os.getenv("TTS_CACHE_MAX_FILES", "200"))
     TTS_CACHE_MAX_SIZE_MB: int = int(os.getenv("TTS_CACHE_MAX_SIZE_MB", "300"))
-    DOCUMENT_STORE_MAX_ITEMS: int = int(os.getenv("DOCUMENT_STORE_MAX_ITEMS", "30"))
-    DOCUMENT_STORE_TTL_SECONDS: int = int(os.getenv("DOCUMENT_STORE_TTL_SECONDS", "3600"))
 
     raw_origins: str = os.getenv(
         "ALLOWED_ORIGINS",

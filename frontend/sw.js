@@ -1,10 +1,13 @@
-const CACHE_NAME = "voxpdf-studio-v2";
+const CACHE_NAME = "voxpdf-studio-v3";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
+  "./tailwind.css",
   "./styles.css",
   "./app.js",
   "./ads.js",
+  "./vendor/pdfjs/pdf.min.js",
+  "./vendor/pdfjs/pdf.worker.min.js",
   "./privacy.html",
   "./manifest.webmanifest",
   "./icon.svg",

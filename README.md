@@ -43,7 +43,7 @@ lector-de-pdf/
 │   ├── app.py                 # API REST en FastAPI y servidor de archivos estáticos
 │   ├── config.py              # Parámetros y variables de entorno de producción
 │   ├── pdf_processor.py       # Motor SmartPDFCleaner y generador de PDF desde texto (PyMuPDF)
-│   ├── security.py            # Hardening, validación binaria, TTLCacheStore y Rate Limiter
+│   ├── security.py            # Hardening, cabeceras CSP/HSTS, validación estructural PDF y Rate Limiter
 │   └── tts_engine.py          # Síntesis neuronal edge-tts con caché SHA-256 y cuota en disco
 ├── frontend/
 │   ├── index.html             # Interfaz de estudio accesible y responsiva

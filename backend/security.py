@@ -3,13 +3,16 @@ from __future__ import annotations
 import re
 import time
 from collections import defaultdict, deque
-from typing import Callable
+from collections.abc import Callable
+from pathlib import PurePosixPath
 
 import fitz
 from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Extensiones ejecutables o de script que nunca deben estar presentes en el nombre de un PDF
+from backend.constants import HSTS_HEADER_VALUE, build_csp_header
+
+# Extensiones ejecutables o de script que nunca deben estar presentes en el nombre de un PDF o adjunto
 DANGEROUS_EXTENSIONS = {
     "exe", "bat", "cmd", "sh", "vbs", "ps1", "js", "jse", "wsf", "wsh",
     "php", "phtml", "py", "pyw", "jar", "msi", "scr", "com", "dll", "hta",
@@ -35,7 +38,12 @@ DANGEROUS_MAGIC_HEADERS: list[tuple[bytes, str]] = [
 DANGEROUS_PDF_TOKENS: list[tuple[bytes, str]] = [
     (b"/Launch", "Acción de ejecución de comandos del sistema operativo (/Launch)"),
 ]
+DANGEROUS_PDF_TOKENS_STR: list[tuple[str, str]] = [
+    (token.decode("ascii"), reason) for token, reason in DANGEROUS_PDF_TOKENS
+]
 
+# Límite máximo de objetos XREF a inspeccionar descomprimidos para acotar el tiempo de validación
+MAX_XREF_SCAN = 2000
 
 # Clave de bucket para clientes sin IP identificable (no debe compartirse con 127.0.0.1)
 UNKNOWN_CLIENT_KEY = "unknown"
@@ -78,56 +86,6 @@ def sanitize_and_validate_filename(filename: str) -> str:
     # 6. Sanitizar caracteres preservando caracteres alfanuméricos, acentos y guiones
     safe_name = re.sub(r"[^\w\s.-]", "", cleaned)
     return safe_name or "documento.pdf"
-
-
-class TTLCacheStore:
-    """Almacén seguro en memoria con caducidad TTL y tamaño máximo acotado (LRU)."""
-
-    def __init__(self, max_items: int = 30, ttl_seconds: int = 3600):
-        self.max_items = max_items
-        self.ttl_seconds = ttl_seconds
-        self._data: dict[str, tuple[float, Any]] = {}
-
-    def set(self, key: str, value: Any) -> None:
-        self.purge_expired()
-        if len(self._data) >= self.max_items and key not in self._data:
-            # Eliminar la clave más antigua
-            oldest_key = next(iter(self._data))
-            self._data.pop(oldest_key, None)
-        self._data[key] = (time.time() + self.ttl_seconds, value)
-
-    def get(self, key: str) -> Any | None:
-        self.purge_expired()
-        entry = self._data.get(key)
-        if not entry:
-            return None
-        expires_at, value = entry
-        if time.time() > expires_at:
-            self._data.pop(key, None)
-            return None
-        return value
-
-    def __contains__(self, key: str) -> bool:
-        return self.get(key) is not None
-
-    def __getitem__(self, key: str) -> Any:
-        val = self.get(key)
-        if val is None:
-            raise KeyError(key)
-        return val
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.set(key, value)
-
-    def __len__(self) -> int:
-        self.purge_expired()
-        return len(self._data)
-
-    def purge_expired(self) -> None:
-        now = time.time()
-        expired_keys = [k for k, (exp, _) in self._data.items() if now > exp]
-        for k in expired_keys:
-            self._data.pop(k, None)
 
 
 class SlidingWindowRateLimiter:
@@ -175,13 +133,51 @@ class SlidingWindowRateLimiter:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware que inyecta cabeceras HTTP de seguridad recomendadas en producción."""
 
+    _CSP_HEADER = build_csp_header(include_frame_ancestors=True)
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         response = await call_next(request)
+        response.headers["Content-Security-Policy"] = self._CSP_HEADER
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = HSTS_HEADER_VALUE
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
+
+
+def _contains_dangerous_action(doc: fitz.Document) -> str | None:
+    """Inspecciona los objetos XREF descomprimidos en busca de acciones peligrosas (ej. /Launch en ObjStm)."""
+    upper_xref = min(doc.xref_length(), MAX_XREF_SCAN)
+    for xref in range(1, upper_xref):
+        try:
+            body = doc.xref_object(xref, compressed=False)
+        except (RuntimeError, ValueError):
+            continue
+        for token, reason in DANGEROUS_PDF_TOKENS_STR:
+            if token in body:
+                return reason
+    return None
+
+
+def _has_dangerous_embedded_files(doc: fitz.Document, raw_bytes: bytes) -> bool:
+    """Detecta adjuntos embebidos con extensión ejecutable (tanto vía catálogo de PyMuPDF como en bytes)."""
+    try:
+        names = doc.embfile_names()
+    except (RuntimeError, ValueError):
+        names = []
+    for name in names:
+        ext = PurePosixPath(name.replace("\\", "/")).suffix.lower().lstrip(".")
+        if ext in DANGEROUS_EXTENSIONS:
+            return True
+
+    if b"/EmbeddedFiles" in raw_bytes:
+        lower_stream = raw_bytes.lower()
+        for ext in ("exe", "bat", "cmd", "sh", "vbs", "ps1", "js", "jar"):
+            if re.search(rf"\.{ext}\b".encode("ascii"), lower_stream):
+                return True
+    return False
 
 
 def validate_pdf_bytes(pdf_bytes: bytes, max_size_mb: int = 20, max_pages: int = 1500) -> None:
@@ -217,7 +213,7 @@ def validate_pdf_bytes(pdf_bytes: bytes, max_size_mb: int = 20, max_pages: int =
             detail="El archivo subido no tiene una firma binaria PDF válida (%PDF-).",
         )
 
-    # 5. Escaneo de vectores de exploit y ejecución en el flujo del PDF
+    # 5. Escaneo rápido de vectores de exploit en el flujo de bytes sin comprimir
     for token, reason in DANGEROUS_PDF_TOKENS:
         if token in pdf_bytes:
             raise HTTPException(
@@ -225,17 +221,7 @@ def validate_pdf_bytes(pdf_bytes: bytes, max_size_mb: int = 20, max_pages: int =
                 detail=f"Archivo bloqueado por seguridad: contiene {reason}.",
             )
 
-    # Verificar si contiene adjuntos embebidos ejecutables (/EmbeddedFiles)
-    if b"/EmbeddedFiles" in pdf_bytes:
-        lower_stream = pdf_bytes.lower()
-        for dangerous_ext in [b".exe", b".bat", b".cmd", b".sh", b".vbs", b".ps1", b".js", b".jar"]:
-            if dangerous_ext in lower_stream:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Archivo bloqueado por seguridad: contiene archivos adjuntos ejecutables ocultos.",
-                )
-
-    # 6. Verificación estructural con PyMuPDF en entorno de inspección
+    # 6. Verificación estructural con PyMuPDF (incluye objetos comprimidos en ObjStm y adjuntos)
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as exc:
@@ -249,6 +235,19 @@ def validate_pdf_bytes(pdf_bytes: bytes, max_size_mb: int = 20, max_pages: int =
             raise HTTPException(
                 status_code=400,
                 detail="El archivo PDF está protegido con contraseña. Desbloquéalo antes de subirlo.",
+            )
+
+        dangerous_reason = _contains_dangerous_action(doc)
+        if dangerous_reason:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Archivo bloqueado por seguridad: contiene {dangerous_reason}.",
+            )
+
+        if _has_dangerous_embedded_files(doc, pdf_bytes):
+            raise HTTPException(
+                status_code=400,
+                detail="Archivo bloqueado por seguridad: contiene archivos adjuntos ejecutables ocultos.",
             )
 
         if doc.page_count > max_pages:

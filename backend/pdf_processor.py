@@ -226,10 +226,13 @@ class SmartPDFCleaner:
                 in_margin = self._is_in_margin_zone(bbox, page_height)
 
                 # Filtrar números de página (en margen o líneas sueltas obvias)
-                if self.options.remove_page_numbers and self.is_standalone_page_number(raw_text):
-                    if in_margin or len(raw_text.strip()) <= 12:
-                        removed_page_numbers_count += 1
-                        continue
+                if (
+                    self.options.remove_page_numbers
+                    and self.is_standalone_page_number(raw_text)
+                    and (in_margin or len(raw_text.strip()) <= 12)
+                ):
+                    removed_page_numbers_count += 1
+                    continue
 
                 # Filtrar encabezados/pies repetidos en márgenes
                 if self.options.remove_headers_footers and in_margin:
@@ -315,16 +318,19 @@ class SmartPDFCleaner:
             for p in pages_output:
                 for s_obj in p["sentences"][:4]:
                     s_text = s_obj["text"].strip().rstrip(":,.-")
-                    if 3 <= len(s_text) <= 90 and heading_pattern.match(s_text):
-                        if not any(c["page_number"] == p["page_number"] and c["title"] == s_text for c in chapters):
-                            chapters.append(
-                                {
-                                    "id": f"ch_p{p['page_number']}_{len(chapters)}",
-                                    "level": 1,
-                                    "title": s_text,
-                                    "page_number": p["page_number"],
-                                }
-                            )
+                    if (
+                        3 <= len(s_text) <= 90
+                        and heading_pattern.match(s_text)
+                        and not any(c["page_number"] == p["page_number"] and c["title"] == s_text for c in chapters)
+                    ):
+                        chapters.append(
+                            {
+                                "id": f"ch_p{p['page_number']}_{len(chapters)}",
+                                "level": 1,
+                                "title": s_text,
+                                "page_number": p["page_number"],
+                            }
+                        )
             if not chapters and total_pages > 0:
                 chapters.append(
                     {

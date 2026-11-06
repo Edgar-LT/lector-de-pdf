@@ -228,25 +228,3 @@ def test_heuristic_chapter_detection_when_no_toc(tmp_path):
     assert any("Capítulo 1" in c["title"] for c in chapters)
     assert any("Capítulo 2" in c["title"] for c in chapters)
 
-
-def test_ttl_cache_store_eviction_and_expiry():
-    """Verifica que TTLCacheStore respete la expiración por tiempo y el límite máximo de elementos."""
-    from backend.security import TTLCacheStore
-
-    cache = TTLCacheStore(max_items=3, ttl_seconds=1)
-    cache.set("a", 10)
-    cache.set("b", 20)
-    cache.set("c", 30)
-    assert len(cache) == 3
-    assert cache.get("a") == 10
-
-    # Agregar el 4to elemento debe purgar el más antiguo ("a")
-    cache.set("d", 40)
-    assert len(cache) == 3
-    assert cache.get("a") is None
-    assert cache.get("d") == 40
-
-    # Simular paso del tiempo expirando entradas
-    cache._data["b"] = (1.0, 20)  # forzar expiración en el pasado
-    assert cache.get("b") is None
-    assert "b" not in cache

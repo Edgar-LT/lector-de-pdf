@@ -5,7 +5,6 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Any
 
 import edge_tts
 
@@ -14,6 +13,10 @@ from backend.constants import DEFAULT_TTS_MAX_FILES, DEFAULT_TTS_MAX_SIZE_MB, MI
 logger = logging.getLogger(__name__)
 
 TTS_MAX_ATTEMPTS = 3
+
+
+class TtsUnavailableError(RuntimeError):
+    """El servicio TTS externo no puede atender la petición (circuit breaker abierto o reintentos agotados)."""
 
 
 NEURAL_VOICES: list[dict[str, str]] = [
@@ -119,7 +122,7 @@ class NeuralTTSEngine:
 
     def _get_cache_path(self, text: str, voice: str, speed: float) -> Path:
         rate_str = self.speed_to_rate_str(speed)
-        key = f"{voice}|{rate_str}|{text.strip()}".encode("utf-8")
+        key = f"{voice}|{rate_str}|{text.strip()}".encode()
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
@@ -178,7 +181,9 @@ class NeuralTTSEngine:
             return cache_path
 
         if self.is_circuit_open:
-            raise RuntimeError("Circuit breaker abierto: el servicio TTS externo no está respondiendo temporalmente.")
+            raise TtsUnavailableError(
+                "Circuit breaker abierto: el servicio TTS externo no está respondiendo temporalmente."
+            )
 
         rate_str = self.speed_to_rate_str(speed)
         last_exc: Exception | None = None
@@ -200,6 +205,4 @@ class NeuralTTSEngine:
                 await asyncio.sleep(0.35 * (attempt + 1))
 
         self.record_failure()
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("No se pudo generar el archivo de audio neuronal.")
+        raise TtsUnavailableError("No se pudo generar el archivo de audio neuronal tras agotar los reintentos.") from last_exc
