@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import logging
 import re
+import time
 from pathlib import Path
+from typing import Protocol
 
 import edge_tts
 
@@ -17,6 +19,20 @@ TTS_MAX_ATTEMPTS = 3
 
 class TtsUnavailableError(RuntimeError):
     """El servicio TTS externo no puede atender la petición (circuit breaker abierto o reintentos agotados)."""
+
+
+class TtsProvider(Protocol):
+    """Contrato de proveedor de síntesis de voz (Inversión de Dependencias)."""
+
+    async def save_audio(self, text: str, voice: str, rate: str, output_path: Path) -> None: ...
+
+
+class EdgeTtsProvider:
+    """Adaptador de producción basado en Microsoft Edge Neural TTS."""
+
+    async def save_audio(self, text: str, voice: str, rate: str, output_path: Path) -> None:
+        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
+        await communicate.save(str(output_path))
 
 
 NEURAL_VOICES: list[dict[str, str]] = [
@@ -80,13 +96,14 @@ NEURAL_VOICES: list[dict[str, str]] = [
 
 
 class NeuralTTSEngine:
-    """Motor de síntesis de voz neuronal basado en edge-tts con caché en disco y Circuit Breaker."""
+    """Motor de síntesis de voz neuronal con caché en disco, proveedor inyectable y Circuit Breaker."""
 
-    def __init__(self, cache_dir: Path | str | None = None):
+    def __init__(self, cache_dir: Path | str | None = None, provider: TtsProvider | None = None):
         if cache_dir is None:
             cache_dir = Path(__file__).resolve().parent.parent / ".tts_cache"
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._provider: TtsProvider = provider or EdgeTtsProvider()
         self._consecutive_failures: int = 0
         self._circuit_open_until: float = 0.0
         self._prune_call_counter: int = 0
@@ -94,7 +111,6 @@ class NeuralTTSEngine:
     @property
     def is_circuit_open(self) -> bool:
         """Determina si el Circuit Breaker está abierto tras fallos reiterados en el servicio upstream."""
-        import time
         return time.time() < self._circuit_open_until
 
     def record_success(self) -> None:
@@ -102,7 +118,6 @@ class NeuralTTSEngine:
         self._circuit_open_until = 0.0
 
     def record_failure(self, threshold: int = 4, cooldown_seconds: float = 30.0) -> None:
-        import time
         self._consecutive_failures += 1
         if self._consecutive_failures >= threshold:
             self._circuit_open_until = time.time() + cooldown_seconds
@@ -126,7 +141,9 @@ class NeuralTTSEngine:
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
-    def maybe_prune_cache(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB, interval: int = 25) -> int:
+    def maybe_prune_cache(
+        self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB, interval: int = 25
+    ) -> int:
         """Invoca la purga LRU de manera throttled (cada N llamadas) para proteger el I/O del disco bajo alta concurrencia."""
         self._prune_call_counter += 1
         if self._prune_call_counter % interval == 0:
@@ -149,14 +166,13 @@ class NeuralTTSEngine:
         for idx, old_file in enumerate(mp3_files):
             try:
                 size = old_file.stat().st_size
-                # Si excede el conteo máximo de archivos o el tamaño acumulado supera la cuota
                 if (max_files > 0 and idx >= max_files) or (total_bytes + size > max_bytes):
                     old_file.unlink(missing_ok=True)
                     removed += 1
                 else:
                     total_bytes += size
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("No se pudo inspeccionar/eliminar archivo de caché %s: %s", old_file, exc)
         return removed
 
     async def synthesize_to_file(
@@ -189,12 +205,12 @@ class NeuralTTSEngine:
         last_exc: Exception | None = None
         for attempt in range(TTS_MAX_ATTEMPTS):
             try:
-                communicate = edge_tts.Communicate(
+                await self._provider.save_audio(
                     text=cleaned_text,
                     voice=selected_voice,
                     rate=rate_str,
+                    output_path=cache_path,
                 )
-                await communicate.save(str(cache_path))
                 if cache_path.exists() and cache_path.stat().st_size > MIN_CACHE_FILE_SIZE:
                     self.record_success()
                     self.maybe_prune_cache(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
@@ -205,4 +221,6 @@ class NeuralTTSEngine:
                 await asyncio.sleep(0.35 * (attempt + 1))
 
         self.record_failure()
-        raise TtsUnavailableError("No se pudo generar el archivo de audio neuronal tras agotar los reintentos.") from last_exc
+        raise TtsUnavailableError(
+            "No se pudo generar el archivo de audio neuronal tras agotar los reintentos."
+        ) from last_exc

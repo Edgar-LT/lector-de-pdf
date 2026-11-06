@@ -9,10 +9,6 @@ if (window.pdfjsLib) {
     "./vendor/pdfjs/pdf.worker.min.js";
 }
 
-const LOCAL_DB_NAME = "voxpdf_local_db";
-const LOCAL_DB_VERSION = 1;
-const LOCAL_STORE_NAME = "documents";
-const ACTIVE_DOC_KEY = "last_opened_pdf";
 const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 const state = {
@@ -121,93 +117,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 /* ==========================================================================
-   PERSISTENCIA LOCAL DE ARCHIVOS PDF (IndexedDB)
-   Permite recordar el PDF cargado y su texto procesado entre sesiones
+   PERSISTENCIA LOCAL DE ARCHIVOS PDF (Delegada a window.VoxStorage)
    ========================================================================== */
 
-function openLocalPdfDb() {
-  return new Promise((resolve, reject) => {
-    if (!window.indexedDB) {
-      reject(new Error("IndexedDB no disponible"));
-      return;
-    }
-    const req = window.indexedDB.open(LOCAL_DB_NAME, LOCAL_DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(LOCAL_STORE_NAME)) {
-        db.createObjectStore(LOCAL_STORE_NAME);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+async function savePdfToLocalDb(file, arrayBuffer, parsed) {
+  await window.VoxStorage.savePdf(file, arrayBuffer, parsed, {
+    removeHeaders: dom.chkRemoveHeaders.checked,
+    removePageNums: dom.chkRemovePageNums.checked,
+    fixLineBreaks: dom.chkFixLineBreaks.checked,
+    splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
+    removeCitations: dom.chkRemoveCitations ? dom.chkRemoveCitations.checked : true,
   });
 }
 
-async function savePdfToLocalDb(file, arrayBuffer, parsed) {
-  try {
-    const db = await openLocalPdfDb();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(LOCAL_STORE_NAME, "readwrite");
-      const store = tx.objectStore(LOCAL_STORE_NAME);
-      store.put(
-        {
-          filename: file.name,
-          fileSize: file.size,
-          pdfBytes: arrayBuffer,
-          parsed,
-          cleaningOptions: {
-            removeHeaders: dom.chkRemoveHeaders.checked,
-            removePageNums: dom.chkRemovePageNums.checked,
-            fixLineBreaks: dom.chkFixLineBreaks.checked,
-            splitByCommas: dom.chkSplitByCommas ? dom.chkSplitByCommas.checked : true,
-            removeCitations: dom.chkRemoveCitations ? dom.chkRemoveCitations.checked : true,
-          },
-          savedAt: new Date().toISOString(),
-        },
-        ACTIVE_DOC_KEY
-      );
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  } catch (err) {
-    console.warn("No se pudo guardar el PDF en IndexedDB:", err);
-  }
-}
-
-async function loadPdfFromLocalDb() {
-  try {
-    const db = await openLocalPdfDb();
-    const record = await new Promise((resolve, reject) => {
-      const tx = db.transaction(LOCAL_STORE_NAME, "readonly");
-      const store = tx.objectStore(LOCAL_STORE_NAME);
-      const getReq = store.get(ACTIVE_DOC_KEY);
-      getReq.onsuccess = () => resolve(getReq.result || null);
-      getReq.onerror = () => reject(getReq.error);
-    });
-    db.close();
-    return record;
-  } catch (_) {
-    return null;
-  }
-}
-
-async function clearPdfFromLocalDb() {
-  try {
-    const db = await openLocalPdfDb();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(LOCAL_STORE_NAME, "readwrite");
-      const store = tx.objectStore(LOCAL_STORE_NAME);
-      store.delete(ACTIVE_DOC_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  } catch (_) {}
-}
-
 async function restorePersistedPdfFromLocalDb() {
-  const record = await loadPdfFromLocalDb();
+  const record = await window.VoxStorage.loadPdf();
   if (!record || !record.pdfBytes || !record.parsed) return;
 
   try {
@@ -236,7 +160,7 @@ async function restorePersistedPdfFromLocalDb() {
 
 async function closeCurrentDocument() {
   stopPlayback();
-  await clearPdfFromLocalDb();
+  await window.VoxStorage.clearPdf();
   state.docData = null;
   state.rawFile = null;
   state.pdfJsDoc = null;
@@ -546,154 +470,7 @@ async function handleUploadFile(file, keepPosition = false) {
 }
 
 async function parsePdfClientSide(arrayBuffer, filename, options) {
-  const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0), isEvalSupported: false });
-  const pdf = await loadingTask.promise;
-  const totalPages = pdf.numPages;
-
-  let removedPageNums = 0;
-  let totalSentences = 0;
-  let totalWords = 0;
-  const pages = [];
-  const pageNumRegex = /^\s*(?:p[áa]gina|p[áa]g\.?|page)?\s*\d+\s*(?:(?:de|of|\/|-)\s*\d+)?\s*$/i;
-
-  for (let p = 1; p <= totalPages; p++) {
-    const page = await pdf.getPage(p);
-    const viewport = page.getViewport({ scale: 1.0 });
-    const textContent = await page.getTextContent();
-
-    const lines = [];
-    for (const item of textContent.items) {
-      const str = (item.str || "").trim();
-      if (!str) continue;
-      const y = viewport.height - item.transform[5];
-      const inMargin = y < viewport.height * 0.09 || y > viewport.height * 0.91;
-
-      if (options.removePageNums && inMargin && pageNumRegex.test(str)) {
-        removedPageNums++;
-        continue;
-      }
-      lines.push(str);
-    }
-
-    let fullText = lines.join(" ");
-    if (options.fixLineBreaks) {
-      fullText = fullText.replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ]{2,})-\s+([a-záéíóúñ]{2,})/g, "$1$2");
-      // Despaciado de títulos tipográficos (p. ej. "A R C O  I :  L A   F O R J A" -> "ARCO I : LA FORJA")
-      fullText = fullText.replace(/(?<=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b) (?=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)/g, "");
-      fullText = fullText.replace(/\s{2,}/g, " ");
-    }
-    if (options.removeAcademicCitations) {
-      // Eliminar citas numéricas tipo [1], [14, 21, 28]
-      fullText = fullText.replace(/\s*\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]/g, "");
-    }
-
-    const abbrRegex = /^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.$/i;
-    const splitPattern = options.splitByCommas !== false
-      ? /(?<=[.!?…])\s+|(?<!\d)(?<=[,;:])\s+/
-      : /(?<=[.!?…])\s+/;
-
-    const rawParts = fullText.split(splitPattern).map((s) => s.trim()).filter(Boolean);
-    const rawSentences = [];
-    let clauseBuf = "";
-
-    for (const piece of rawParts) {
-      if (clauseBuf) {
-        const words = clauseBuf.split(/\s+/);
-        const lastWord = words[words.length - 1] || "";
-        if (abbrRegex.test(lastWord)) {
-          clauseBuf += " " + piece;
-          continue;
-        }
-        rawSentences.push(clauseBuf);
-        clauseBuf = piece;
-      } else {
-        clauseBuf = piece;
-      }
-    }
-    if (clauseBuf) rawSentences.push(clauseBuf);
-
-    const pageSentences = rawSentences.map((sText, idx) => ({
-      id: `p${p}_s${idx}`,
-      page_number: p,
-      sentence_index: idx,
-      paragraph_index: Math.floor(idx / 3),
-      text: sText,
-      bbox: [0.08, 0.12, 0.92, 0.85],
-    }));
-
-    const wordsInPage = fullText ? fullText.split(/\s+/).length : 0;
-    totalSentences += pageSentences.length;
-    totalWords += wordsInPage;
-
-    pages.push({
-      page_number: p,
-      paragraphs: fullText ? [fullText] : [],
-      sentences: pageSentences,
-      word_count: wordsInPage,
-    });
-  }
-
-  let chapters = [];
-  try {
-    const outline = await pdf.getOutline();
-    if (outline && outline.length > 0) {
-      for (let i = 0; i < outline.length; i++) {
-        const item = outline[i];
-        let pageNum = 1;
-        if (item.dest) {
-          const dest = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
-          if (dest && dest[0]) {
-            const pageIndex = await pdf.getPageIndex(dest[0]);
-            pageNum = pageIndex + 1;
-          }
-        }
-        chapters.push({
-          id: `ch_${i + 1}`,
-          level: 1,
-          title: item.title || `Capítulo ${i + 1}`,
-          page_number: pageNum,
-        });
-      }
-    }
-  } catch (_) {}
-
-  // Heurística de detección si no hay marcadores
-  if (chapters.length === 0) {
-    const chapterHeadingRegex = /^\s*(?:cap[íi]tulo|cap\.|acto|secci[óo]n|parte|arco|libro)\s+([0-9ivxlcdm]+|[a-záéíóúñ]+)/i;
-    pages.forEach((pg) => {
-      const firstSentence = pg.sentences?.[0]?.text || "";
-      if (chapterHeadingRegex.test(firstSentence)) {
-        chapters.push({
-          id: `ch_${chapters.length + 1}`,
-          level: 1,
-          title: firstSentence.slice(0, 48),
-          page_number: pg.page_number,
-        });
-      }
-    });
-  }
-
-  if (chapters.length === 0) {
-    chapters = [{ id: "ch_1", level: 1, title: "Inicio del documento", page_number: 1 }];
-  }
-
-  return {
-    doc_id: `${filename}_${arrayBuffer.byteLength}`,
-    filename,
-    title: filename.replace(/\.pdf$/i, ""),
-    author: "",
-    total_pages: totalPages,
-    total_sentences: totalSentences,
-    total_words: totalWords,
-    estimated_duration_minutes: Math.round((totalWords / 155) * 10) / 10,
-    cleaning_stats: {
-      removed_headers_footers: 0,
-      removed_page_numbers: removedPageNums,
-      fix_line_breaks: options.fixLineBreaks,
-    },
-    chapters,
-    pages,
-  };
+  return window.VoxClientParser.parsePdfClientSide(arrayBuffer, filename, options);
 }
 
 async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, autoRestore = false) {
@@ -844,32 +621,8 @@ function getFontSizeClasses() {
   }
 }
 
-function escapeHtml(str) {
-  return String(str || "").replace(/[&<>"']/g, (m) => {
-    switch (m) {
-      case "&": return "&amp;";
-      case "<": return "&lt;";
-      case ">": return "&gt;";
-      case '"': return "&quot;";
-      case "'": return "&#39;";
-      default: return m;
-    }
-  });
-}
-
-function escapeRegex(str) {
-  return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function formatSentenceWithSearch(text) {
-  const safeText = escapeHtml(text);
-  if (!state.scriptSearchQuery) return safeText;
-  try {
-    const regex = new RegExp(`(${escapeRegex(state.scriptSearchQuery)})`, "gi");
-    return safeText.replace(regex, `<mark class="bg-amber-400/30 text-amber-200 px-0.5 rounded font-semibold">$1</mark>`);
-  } catch (_) {
-    return safeText;
-  }
+  return window.VoxClientParser.formatSentenceWithSearch(text, state.scriptSearchQuery);
 }
 
 function applySearchFilter() {
@@ -1523,36 +1276,20 @@ async function stepSentence(delta) {
   }
 }
 
-function getProgressStorageKey(docId) {
-  return `voxpdf_progress_${docId}`;
-}
-
-function getSavedProgressObject(docId) {
-  try {
-    const raw = localStorage.getItem(getProgressStorageKey(docId));
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
-}
-
 function saveReadingProgress() {
   if (!state.docData) return;
-  const payload = {
+  window.VoxStorage.saveProgress({
     doc_id: state.docData.doc_id,
     page: state.currentPage,
     sentence: state.currentSentenceIdx,
     voice: state.selectedVoice,
     speed: state.playbackSpeed,
     updatedAt: new Date().toISOString(),
-  };
-  try {
-    localStorage.setItem(getProgressStorageKey(state.docData.doc_id), JSON.stringify(payload));
-  } catch (_) {}
+  });
 }
 
 function checkSavedProgress(docId) {
-  const saved = getSavedProgressObject(docId);
+  const saved = window.VoxStorage.getProgress(docId);
   if (!saved || (saved.page === 1 && saved.sentence === 0)) {
     dom.resumeBanner.classList.add("hidden");
     return;

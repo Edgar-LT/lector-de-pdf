@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="description" content="VoxPDF — Lector y conversor de documentos PDF a audiolibro con limpieza de márgenes y síntesis de voz." />
   <meta name="author" content="Edgar López" />
-  <meta name="theme-color" content="#0b0d12" />
+  <meta name="theme-color" content="#0a0a0c" />
   <title>VoxPDF — Lector de PDF a Voz</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,19 +39,19 @@
       </div>
 
       <div class="flex items-center gap-2 flex-shrink-0">
-        <button id="btnOpenPasteModal" type="button" class="h-9 px-3 rounded-lg bg-surface hover:bg-surface-elevated border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors" title="Pegar texto y convertir a PDF">
-          <span class="material-symbols-outlined text-[17px]">edit_note</span>
+        <button id="btnOpenPasteModal" type="button" aria-label="Pegar texto y convertir a PDF" class="h-9 px-3 rounded-lg bg-surface hover:bg-surface-elevated border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors" title="Pegar texto y convertir a PDF">
+          <span class="material-symbols-outlined text-[17px]" aria-hidden="true">edit_note</span>
           <span class="hidden sm:inline">Pegar Texto</span>
         </button>
 
-        <label for="pdfFileInput" class="cursor-pointer h-9 px-3.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
-          <span class="material-symbols-outlined text-[17px]">upload_file</span>
+        <label for="pdfFileInput" aria-label="Abrir documento PDF" class="cursor-pointer h-9 px-3.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
+          <span class="material-symbols-outlined text-[17px]" aria-hidden="true">upload_file</span>
           <span>Abrir PDF</span>
         </label>
-        <input id="pdfFileInput" type="file" accept="application/pdf,.pdf" hidden />
+        <input id="pdfFileInput" type="file" aria-label="Seleccionar archivo PDF" accept="application/pdf,.pdf" hidden />
 
-        <a href="https://edgar-lt.github.io/portafolio/" target="_blank" rel="noopener noreferrer" title="Portafolio de Edgar López" class="h-9 px-2.5 rounded-lg bg-surface hover:bg-surface-elevated border border-white/[0.07] text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors">
-          <span class="material-symbols-outlined text-[16px]">person</span>
+        <a href="https://edgar-lt.github.io/portafolio/" target="_blank" rel="noopener noreferrer" aria-label="Portafolio de Edgar López" title="Portafolio de Edgar López" class="h-9 px-2.5 rounded-lg bg-surface hover:bg-surface-elevated border border-white/[0.07] text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors">
+          <span class="material-symbols-outlined text-[16px]" aria-hidden="true">person</span>
           <span class="hidden sm:inline">Autor</span>
         </a>
       </div>
@@ -70,8 +70,8 @@
         <span id="resumeBannerText">Lectura anterior encontrada.</span>
       </div>
       <div class="flex items-center gap-2">
-        <button id="btnResumeConfirm" type="button" class="px-3 py-1 rounded-md bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors">Continuar</button>
-        <button id="btnResumeDismiss" type="button" class="px-2.5 py-1 rounded-md bg-surface-elevated hover:bg-surface-hover text-slate-400 text-xs transition-colors">Ignorar</button>
+        <button id="btnResumeConfirm" type="button" aria-label="Continuar lectura desde la posición guardada" class="px-3 py-1 rounded-md bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors">Continuar</button>
+        <button id="btnResumeDismiss" type="button" aria-label="Ignorar progreso guardado" class="px-2.5 py-1 rounded-md bg-surface-elevated hover:bg-surface-hover text-slate-400 text-xs transition-colors">Ignorar</button>
       </div>
     </div>
 
@@ -101,7 +101,7 @@
                 <span id="statSentences" class="hidden">0</span>
               </p>
             </div>
-            <button id="btnClearSavedPdf" type="button" title="Cerrar documento guardado" class="hidden px-2 py-1 rounded-md bg-bg-base hover:bg-surface-elevated border border-white/[0.07] text-slate-400 hover:text-slate-200 text-[11px] flex-shrink-0 transition-colors">
+            <button id="btnClearSavedPdf" type="button" aria-label="Cerrar documento guardado" title="Cerrar documento guardado" class="hidden px-2 py-1 rounded-md bg-bg-base hover:bg-surface-elevated border border-white/[0.07] text-slate-400 hover:text-slate-200 text-[11px] flex-shrink-0 transition-colors">
               Cerrar
             </button>
           </div>
@@ -109,13 +109,13 @@
 
         <!-- Navegación por Capítulos y Páginas -->
         <div class="w-full bg-surface border border-white/[0.07] rounded-xl p-3.5 flex flex-col gap-3">
-          <div class="grid grid-cols-2 p-1 bg-bg-base rounded-lg border border-white/[0.05]">
-            <button type="button" data-tab="chapters" class="tab-btn active py-1.5 rounded-md bg-surface-elevated text-slate-100 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
-              <span class="material-symbols-outlined text-[16px]">toc</span>
+          <div class="grid grid-cols-2 p-1 bg-bg-base rounded-lg border border-white/[0.05]" role="tablist" aria-label="Navegación del documento">
+            <button type="button" role="tab" aria-label="Ver lista de capítulos" data-tab="chapters" class="tab-btn active py-1.5 rounded-md bg-surface-elevated text-slate-100 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined text-[16px]" aria-hidden="true">toc</span>
               <span>Capítulos</span>
             </button>
-            <button type="button" data-tab="pages" class="tab-btn py-1.5 rounded-md text-slate-400 hover:text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
-              <span class="material-symbols-outlined text-[16px]">grid_view</span>
+            <button type="button" role="tab" aria-label="Ver cuadrícula de páginas" data-tab="pages" class="tab-btn py-1.5 rounded-md text-slate-400 hover:text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined text-[16px]" aria-hidden="true">grid_view</span>
               <span>Páginas</span>
             </button>
           </div>
@@ -150,7 +150,7 @@
                 <span class="block text-xs text-slate-200 font-medium">Omitir encabezados y pies</span>
                 <span class="block text-[11px] text-slate-400"><span id="countHeadersRemoved">0</span> filtrados</span>
               </div>
-              <input id="chkRemoveHeaders" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+              <input id="chkRemoveHeaders" type="checkbox" checked class="w-4 h-4 accent-accent rounded cursor-pointer" />
             </label>
 
             <!-- Opción 2 -->
@@ -159,7 +159,7 @@
                 <span class="block text-xs text-slate-200 font-medium">Omitir números de página</span>
                 <span class="block text-[11px] text-slate-400"><span id="countPageNumsRemoved">0</span> filtrados</span>
               </div>
-              <input id="chkRemovePageNums" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+              <input id="chkRemovePageNums" type="checkbox" checked class="w-4 h-4 accent-accent rounded cursor-pointer" />
             </label>
 
             <!-- Opción 3 -->
@@ -168,7 +168,7 @@
                 <span class="block text-xs text-slate-200 font-medium">Unir palabras cortadas por guion</span>
                 <span class="block text-[11px] text-slate-400">Continuidad entre líneas</span>
               </div>
-              <input id="chkFixLineBreaks" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+              <input id="chkFixLineBreaks" type="checkbox" checked class="w-4 h-4 accent-accent rounded cursor-pointer" />
             </label>
 
             <!-- Opción 4: Separar por comas o puntos -->
@@ -177,7 +177,7 @@
                 <span class="block text-xs text-slate-200 font-medium">Separar por comas y puntos</span>
                 <span class="block text-[11px] text-slate-400">Pausas naturales y lectura por cláusulas</span>
               </div>
-              <input id="chkSplitByCommas" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+              <input id="chkSplitByCommas" type="checkbox" checked class="w-4 h-4 accent-accent rounded cursor-pointer" />
             </label>
 
             <!-- Opción 5: Omitir citas académicas -->
@@ -186,7 +186,7 @@
                 <span class="block text-xs text-slate-200 font-medium">Omitir citas [1, 2]</span>
                 <span class="block text-[11px] text-slate-400">Limpieza de corchetes bibliográficos</span>
               </div>
-              <input id="chkRemoveCitations" type="checkbox" checked class="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+              <input id="chkRemoveCitations" type="checkbox" checked class="w-4 h-4 accent-accent rounded cursor-pointer" />
             </label>
           </div>
         </div>
@@ -194,13 +194,13 @@
         <!-- Espacio publicitario discreto (AdMob / AdSense) -->
         <aside id="adBannerSlot" aria-label="Espacio publicitario" class="w-full bg-surface border border-white/[0.07] rounded-xl p-3 flex items-center justify-between gap-2.5">
           <div class="flex items-center gap-2.5 min-w-0">
-            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-elevated text-slate-400 border border-white/[0.06]">AD</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-elevated text-champagne border border-white/[0.08]">AD</span>
             <div class="min-w-0">
               <span class="block text-xs text-slate-200 font-medium truncate">Exportación MP3 y Voz Cloud</span>
               <a href="./privacy.html" class="text-[11px] text-slate-400 hover:text-slate-300 underline">Privacidad</a>
             </div>
           </div>
-          <button id="btnWatchAdUnlock" type="button" class="px-2.5 py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex-shrink-0 transition-colors">
+          <button id="btnWatchAdUnlock" type="button" aria-label="Activar pase de exportación MP3 por 30 minutos" class="px-2.5 py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex-shrink-0 transition-colors">
             Activar MP3 (30m)
           </button>
         </aside>
@@ -235,14 +235,14 @@
           </div>
 
           <!-- Selector de vista -->
-          <div class="flex items-center gap-1 bg-bg-base p-1 rounded-lg border border-white/[0.05]">
-            <button type="button" data-view="split" class="view-mode-btn active py-1 px-2.5 rounded-md text-xs font-medium bg-surface-elevated text-slate-100 transition-colors">
+          <div class="flex items-center gap-1 bg-bg-base p-1 rounded-lg border border-white/[0.05]" role="group" aria-label="Modo de visualización">
+            <button type="button" data-view="split" aria-label="Vista dividida: PDF y texto" class="view-mode-btn active py-1 px-2.5 rounded-md text-xs font-medium bg-surface-elevated text-slate-100 transition-colors">
               Dividida
             </button>
-            <button type="button" data-view="script" class="view-mode-btn py-1 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
+            <button type="button" data-view="script" aria-label="Vista solo texto" class="view-mode-btn py-1 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
               Texto
             </button>
-            <button type="button" data-view="pdf" class="view-mode-btn py-1 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
+            <button type="button" data-view="pdf" aria-label="Vista solo documento PDF" class="view-mode-btn py-1 px-2.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
               PDF
             </button>
           </div>
@@ -251,7 +251,7 @@
         <!-- Estado inicial vacío (antes de abrir un PDF) -->
         <div id="emptyStateDropzone" class="w-full rounded-xl bg-surface border border-dashed border-white/15 p-10 text-center flex flex-col items-center justify-center gap-3 my-1 transition-colors">
           <div class="w-12 h-12 rounded-xl bg-surface-elevated border border-white/[0.07] flex items-center justify-center text-slate-300">
-            <span class="material-symbols-outlined text-[26px]">description</span>
+            <span class="material-symbols-outlined text-[26px]" aria-hidden="true">description</span>
           </div>
           <div class="max-w-md flex flex-col gap-1">
             <h2 class="font-display text-base text-slate-100 font-semibold">Abre un documento PDF para empezar</h2>
@@ -261,11 +261,11 @@
           </div>
           <div class="flex items-center gap-2 mt-1 flex-wrap justify-center">
             <label for="pdfFileInput" class="cursor-pointer h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors">
-              <span class="material-symbols-outlined text-[17px]">upload_file</span>
+              <span class="material-symbols-outlined text-[17px]" aria-hidden="true">upload_file</span>
               <span>Seleccionar archivo PDF</span>
             </label>
-            <button id="btnEmptyPaste" type="button" class="h-9 px-3.5 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors">
-              <span class="material-symbols-outlined text-[17px]">edit_note</span>
+            <button id="btnEmptyPaste" type="button" aria-label="Pegar texto o borrador" class="h-9 px-3.5 rounded-lg bg-surface-elevated hover:bg-surface-hover border border-white/[0.08] text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined text-[17px]" aria-hidden="true">edit_note</span>
               <span>Pegar texto o borrador</span>
             </button>
           </div>
@@ -300,8 +300,8 @@
               <div class="flex items-center gap-2">
                 <!-- Buscador de texto en la página actual -->
                 <div class="relative flex items-center">
-                  <span class="material-symbols-outlined text-slate-500 text-[15px] absolute left-2 pointer-events-none">search</span>
-                  <input id="scriptSearchInput" type="search" placeholder="Buscar en página..." class="h-7 pl-6 pr-2 rounded-md bg-bg-base border border-white/[0.07] text-slate-200 text-xs placeholder-slate-500 focus:outline-none focus:border-accent w-36 sm:w-44 focus:w-52 transition-all" />
+                  <span class="material-symbols-outlined text-slate-500 text-[15px] absolute left-2 pointer-events-none" aria-hidden="true">search</span>
+                  <input id="scriptSearchInput" type="search" aria-label="Buscar texto en la página actual" placeholder="Buscar en página..." class="h-7 pl-6 pr-2 rounded-md bg-bg-base border border-white/[0.07] text-slate-200 text-xs placeholder-slate-500 focus:outline-none focus:border-accent w-36 sm:w-44 focus:w-52 transition-all" />
                 </div>
 
                 <!-- Control de escala de fuente -->
@@ -399,14 +399,14 @@
   <!-- ===================================================================== -->
   <!-- NAVEGACIÓN INFERIOR EN MÓVIL (< 1024px)                               -->
   <!-- ===================================================================== -->
-  <nav class="lg:hidden fixed bottom-0 w-full z-50 pb-safe bg-bg-base/95 border-t border-white/[0.08] backdrop-blur-md">
+  <nav aria-label="Navegación móvil" class="lg:hidden fixed bottom-0 w-full z-50 pb-safe bg-bg-base/95 border-t border-white/[0.08] backdrop-blur-md">
     <div class="flex justify-around items-center h-14 px-4">
-      <button type="button" data-mobile-panel="stage" class="mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-accent-light font-medium transition-colors">
-        <span class="material-symbols-outlined text-[21px]">menu_book</span>
+      <button type="button" data-mobile-panel="stage" aria-label="Mostrar panel de lectura y audio" class="mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-accent-light font-medium transition-colors">
+        <span class="material-symbols-outlined text-[21px]" aria-hidden="true">menu_book</span>
         <span class="text-[11px] mt-0.5">Lector</span>
       </button>
-      <button type="button" data-mobile-panel="sidebar" class="mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-slate-400 transition-colors">
-        <span class="material-symbols-outlined text-[21px]">toc</span>
+      <button type="button" data-mobile-panel="sidebar" aria-label="Mostrar índice y ajustes de limpieza" class="mobile-nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] px-4 text-slate-400 transition-colors">
+        <span class="material-symbols-outlined text-[21px]" aria-hidden="true">toc</span>
         <span class="text-[11px] mt-0.5">Índice y Ajustes</span>
       </button>
     </div>
@@ -429,8 +429,8 @@
         <div id="rewardedAdProgress" class="h-full bg-accent transition-all" style="width: 0%"></div>
       </div>
       <div class="flex justify-end gap-2">
-        <button id="btnCancelAdReward" type="button" class="px-3 py-1.5 rounded-lg bg-surface-elevated text-slate-300 text-xs">Cancelar</button>
-        <button id="btnClaimAdReward" type="button" disabled class="px-3.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-40">Continuar</button>
+        <button id="btnCancelAdReward" type="button" aria-label="Cancelar anuncio recompensado" class="px-3 py-1.5 rounded-lg bg-surface-elevated text-slate-300 text-xs">Cancelar</button>
+        <button id="btnClaimAdReward" type="button" disabled aria-label="Reclamar recompensa y continuar" class="px-3.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-40">Continuar</button>
       </div>
     </div>
   </div>
@@ -439,12 +439,14 @@
     <p class="text-xs text-slate-300">
       Esta aplicación gratuita utiliza anuncios (Google AdMob / AdSense). Consulta la <a href="./privacy.html" class="text-accent-light underline">Política de Privacidad</a>.
     </p>
-    <button id="btnAcceptConsent" type="button" class="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex-shrink-0">Entendido</button>
+    <button id="btnAcceptConsent" type="button" aria-label="Aceptar aviso de privacidad" class="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium flex-shrink-0">Entendido</button>
   </div>
 
   <audio id="neuralAudioPlayer" preload="auto"></audio>
   <audio id="bgKeepAliveAudio" loop preload="auto"></audio>
   <script src="./ads.js"></script>
+  <script src="./storage.js"></script>
+  <script src="./pdf-client-parser.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

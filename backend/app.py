@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -54,6 +54,16 @@ tts_engine = NeuralTTSEngine(cache_dir=BASE_DIR / ".tts_cache")
 rate_limiter = SlidingWindowRateLimiter(window_seconds=60)
 
 
+def get_tts_engine() -> NeuralTTSEngine:
+    """Proveedor de dependencia para el motor TTS (facilita overrides en pruebas)."""
+    return tts_engine
+
+
+def get_rate_limiter() -> SlidingWindowRateLimiter:
+    """Proveedor de dependencia para el limitador de tasa."""
+    return rate_limiter
+
+
 class CreatePdfRequest(BaseModel):
     title: str = Field(default="Documento", max_length=200)
     text: str = Field(..., min_length=1, max_length=500000)
@@ -69,11 +79,17 @@ class SpeakRequest(BaseModel):
 
 
 @app.get("/api/health")
-async def health_check() -> dict[str, Any]:
-    mp3_files = list(tts_engine.cache_dir.glob("*.mp3")) if tts_engine.cache_dir.exists() else []
-    cache_bytes = sum(f.stat().st_size for f in mp3_files)
+async def health_check(engine: NeuralTTSEngine = Depends(get_tts_engine)) -> dict[str, Any]:
+    try:
+        mp3_files = list(engine.cache_dir.glob("*.mp3")) if engine.cache_dir.exists() else []
+        cache_bytes = sum(f.stat().st_size for f in mp3_files)
+        status = "ok"
+    except OSError:
+        mp3_files = []
+        cache_bytes = 0
+        status = "degraded"
     return {
-        "status": "ok",
+        "status": status,
         "version": "1.3.0",
         "engine": "edge-tts + PyMuPDF",
         "max_pdf_size_mb": settings.MAX_PDF_SIZE_MB,
@@ -86,8 +102,8 @@ async def health_check() -> dict[str, Any]:
 
 
 @app.get("/api/voices")
-async def list_voices() -> dict[str, Any]:
-    return {"voices": tts_engine.get_available_voices()}
+async def list_voices(engine: NeuralTTSEngine = Depends(get_tts_engine)) -> dict[str, Any]:
+    return {"voices": engine.get_available_voices()}
 
 
 async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
@@ -119,8 +135,9 @@ async def parse_pdf(
     fix_line_breaks: bool = Form(True),
     split_by_commas: bool = Form(True),
     remove_academic_citations: bool = Form(True),
+    limiter: SlidingWindowRateLimiter = Depends(get_rate_limiter),
 ) -> dict[str, Any]:
-    rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
+    limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
 
     filename = sanitize_and_validate_filename(file.filename or "")
     pdf_bytes = await _read_upload_with_limit(file, max_bytes=settings.MAX_PDF_SIZE_MB * BYTES_PER_MB)
@@ -138,8 +155,12 @@ async def parse_pdf(
 
 
 @app.post("/api/pdf/create-from-text")
-async def create_pdf_from_text(request: Request, payload: CreatePdfRequest) -> dict[str, Any]:
-    rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
+async def create_pdf_from_text(
+    request: Request,
+    payload: CreatePdfRequest,
+    limiter: SlidingWindowRateLimiter = Depends(get_rate_limiter),
+) -> dict[str, Any]:
+    limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
     text_content = payload.text.strip()
     if not text_content:
         raise HTTPException(status_code=400, detail="El contenido del texto no puede estar vacío.")
@@ -171,11 +192,16 @@ async def create_pdf_from_text(request: Request, payload: CreatePdfRequest) -> d
 
 
 @app.post("/api/tts/speak")
-async def speak_sentence(request: Request, req: SpeakRequest) -> FileResponse:
-    rate_limiter.check(request, bucket="tts", max_requests=settings.RATE_LIMIT_TTS_PER_MIN)
+async def speak_sentence(
+    request: Request,
+    req: SpeakRequest,
+    limiter: SlidingWindowRateLimiter = Depends(get_rate_limiter),
+    engine: NeuralTTSEngine = Depends(get_tts_engine),
+) -> FileResponse:
+    limiter.check(request, bucket="tts", max_requests=settings.RATE_LIMIT_TTS_PER_MIN)
 
     try:
-        audio_path = await tts_engine.synthesize_to_file(
+        audio_path = await engine.synthesize_to_file(
             text=req.text,
             voice=req.voice,
             speed=req.speed,
@@ -225,6 +251,16 @@ async def serve_styles() -> FileResponse:
 @app.get("/app.js")
 async def serve_app_js() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "app.js"), media_type="application/javascript")
+
+
+@app.get("/storage.js")
+async def serve_storage_js() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "storage.js"), media_type="application/javascript")
+
+
+@app.get("/pdf-client-parser.js")
+async def serve_pdf_client_parser_js() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "pdf-client-parser.js"), media_type="application/javascript")
 
 
 @app.get("/ads.js")

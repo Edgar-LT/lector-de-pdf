@@ -1,18 +1,22 @@
 /* ==========================================================================
-   VOXPDF STUDIO — EDITORIAL DARK INTERFACE
-   Diseño sobrio, limpio y centrado en la lectura // Edgar López
+   VOXPDF STUDIO — APPLE FLAGSHIP & PRECISION INDUSTRIAL UI
+   Paleta de Materiales Nobles (Obsidiana, Titanio, Azul Óptico, Oro Champán)
    ========================================================================== */
 
 :root {
-  --bg-base: #0b0d12;
-  --bg-surface: #11141c;
-  --bg-elevated: #171b26;
-  --border-subtle: rgba(255, 255, 255, 0.07);
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent: #6366f1;
-  --accent-light: #818cf8;
+  --bg-base: #0a0a0c;
+  --bg-surface: #141417;
+  --bg-elevated: #1d1d1f;
+  --bg-glass: rgba(20, 20, 23, 0.76);
+  --border-hairline: rgba(255, 255, 255, 0.08);
+  --border-specular: rgba(255, 255, 255, 0.15);
+  --text-primary: #f5f5f7;
+  --text-secondary: #86868b;
+  --text-muted: #515154;
+  --accent: #2997ff;
+  --accent-light: #64b5ff;
+  --champagne: #c5a059;
+  --ease-mechanical: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html,
@@ -24,6 +28,66 @@ body {
   color: var(--text-primary);
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Precisión de cronógrafo en métricas, contadores y selectores numéricos */
+.font-mono,
+.tabular-nums,
+#statPages,
+#statWords,
+#docDurationBadge,
+#currentPageLabel,
+#totalPagesLabel,
+#bookProgressPct,
+#sentenceCounterLabel,
+#countHeadersRemoved,
+#countPageNumsRemoved,
+#sleepTimerBadge,
+#rewardedAdTimer {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bisel especular cenital de 1px en tarjetas Bento de superficie */
+.bg-surface {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.09),
+    0 12px 32px -12px rgba(0, 0, 0, 0.55);
+}
+
+/* Cristal de zafiro esmerilado en barra superior y reproductor flotante */
+header.fixed,
+section.sticky {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* Transiciones mecánicas suaves y respuesta táctil */
+button,
+label[for="pdfFileInput"],
+.chapter-item,
+.page-pill {
+  transition:
+    background-color 0.22s var(--ease-mechanical),
+    border-color 0.22s var(--ease-mechanical),
+    color 0.22s var(--ease-mechanical),
+    transform 0.16s var(--ease-mechanical);
+}
+
+button:active:not(:disabled),
+label[for="pdfFileInput"]:active {
+  transform: scale(0.98);
+}
+
+/* Accesibilidad de teclado nítida (WCAG :focus-visible) */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+label[for="pdfFileInput"]:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .pb-safe {
@@ -38,7 +102,7 @@ body {
   display: none !important;
 }
 
-/* Scrollbars discretos */
+/* Scrollbars discretos en titanio */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -49,12 +113,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(134, 134, 139, 0.24);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.35);
+  background: rgba(134, 134, 139, 0.42);
 }
 
 /* Modos de vista (Dividida / Solo Texto / Solo PDF) */
@@ -66,25 +130,25 @@ body {
   display: none !important;
 }
 
-/* Resaltado de oración sobre el lienzo PDF.js */
+/* Resaltado de oración sobre el lienzo PDF.js en Azul Óptico */
 .pdf-highlight-box {
   position: absolute;
-  border: 1.5px solid rgba(99, 102, 241, 0.85);
-  background: rgba(99, 102, 241, 0.14);
-  border-radius: 3px;
+  border: 1.5px solid rgba(41, 151, 255, 0.88);
+  background: rgba(41, 151, 255, 0.14);
+  border-radius: 4px;
   pointer-events: none;
-  transition: all 0.18s ease;
+  transition: all 0.2s var(--ease-mechanical);
 }
 
 /* Efecto al arrastrar archivo sobre la zona de carga */
 #emptyStateDropzone.dragover {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.06);
+  border-color: var(--accent);
+  background: rgba(41, 151, 255, 0.06);
 }
 
 /* Indicador de audio en reproducción */
 .audio-visualizer span {
-  transition: transform 0.2s ease;
+  transition: transform 0.2s var(--ease-mechanical);
   transform: scaleY(0.35);
 }
 
@@ -113,12 +177,13 @@ body {
   }
 }
 
-/* Modales y banner de privacidad */
+/* Modales y banner de privacidad en cristal esmerilado */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(7, 9, 14, 0.78);
-  backdrop-filter: blur(6px);
+  background: rgba(10, 10, 12, 0.76);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -132,20 +197,34 @@ body {
   left: 50%;
   transform: translateX(-50%);
   width: min(94vw, 680px);
-  background: #151923;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-specular);
+  border-radius: 14px;
   padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   z-index: 90;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
 }
 
 @media (min-width: 1024px) {
   .consent-banner {
     bottom: 1rem;
+  }
+}
+
+/* Respeto estricto por prefers-reduced-motion (Accesibilidad WCAG) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
