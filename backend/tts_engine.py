@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import edge_tts
+
+from backend.constants import DEFAULT_TTS_MAX_FILES, DEFAULT_TTS_MAX_SIZE_MB, MIN_CACHE_FILE_SIZE
+
+logger = logging.getLogger(__name__)
+
+TTS_MAX_ATTEMPTS = 3
 
 
 NEURAL_VOICES: list[dict[str, str]] = [
@@ -116,14 +123,14 @@ class NeuralTTSEngine:
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
-    def maybe_prune_cache(self, max_files: int = 150, max_size_mb: int = 300, interval: int = 25) -> int:
+    def maybe_prune_cache(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB, interval: int = 25) -> int:
         """Invoca la purga LRU de manera throttled (cada N llamadas) para proteger el I/O del disco bajo alta concurrencia."""
         self._prune_call_counter += 1
         if self._prune_call_counter % interval == 0:
             return self.prune_cache(max_files=max_files, max_size_mb=max_size_mb)
         return 0
 
-    def prune_cache(self, max_files: int = 150, max_size_mb: int = 300) -> int:
+    def prune_cache(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB) -> int:
         """Elimina los archivos MP3 más antiguos cuando la caché supera max_files o max_size_mb (evicción LRU por cuota)."""
         if (max_files <= 0 and max_size_mb <= 0) or not self.cache_dir.exists():
             return 0
@@ -154,8 +161,8 @@ class NeuralTTSEngine:
         text: str,
         voice: str = "es-MX-DaliaNeural",
         speed: float = 1.0,
-        max_cache_files: int = 150,
-        max_cache_size_mb: int = 300,
+        max_cache_files: int = DEFAULT_TTS_MAX_FILES,
+        max_cache_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB,
     ) -> Path:
         """Sintetiza un texto a archivo MP3 usando caché si ya fue generado."""
         cleaned_text = re.sub(r"\s*\n+\s*", " ", text.strip())
@@ -167,7 +174,7 @@ class NeuralTTSEngine:
         selected_voice = voice if voice in valid_voice_ids else "es-MX-DaliaNeural"
         cache_path = self._get_cache_path(cleaned_text, selected_voice, speed)
 
-        if cache_path.exists() and cache_path.stat().st_size > 128:
+        if cache_path.exists() and cache_path.stat().st_size > MIN_CACHE_FILE_SIZE:
             return cache_path
 
         if self.is_circuit_open:
@@ -175,7 +182,7 @@ class NeuralTTSEngine:
 
         rate_str = self.speed_to_rate_str(speed)
         last_exc: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(TTS_MAX_ATTEMPTS):
             try:
                 communicate = edge_tts.Communicate(
                     text=cleaned_text,
@@ -183,12 +190,13 @@ class NeuralTTSEngine:
                     rate=rate_str,
                 )
                 await communicate.save(str(cache_path))
-                if cache_path.exists() and cache_path.stat().st_size > 128:
+                if cache_path.exists() and cache_path.stat().st_size > MIN_CACHE_FILE_SIZE:
                     self.record_success()
                     self.maybe_prune_cache(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
                     return cache_path
             except Exception as exc:
                 last_exc = exc
+                logger.warning("Intento %d/%d de síntesis TTS falló: %s", attempt + 1, TTS_MAX_ATTEMPTS, exc)
                 await asyncio.sleep(0.35 * (attempt + 1))
 
         self.record_failure()

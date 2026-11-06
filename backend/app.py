@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,15 @@ from backend.security import (
     SecurityHeadersMiddleware,
     SlidingWindowRateLimiter,
     TTLCacheStore,
+    sanitize_and_validate_filename,
     validate_pdf_bytes,
 )
+from backend.services.error_handler import exception_to_http
+from backend.services.pdf_processing_service import PdfProcessingService
 from backend.tts_engine import NeuralTTSEngine
 
+UPLOAD_CHUNK_SIZE_BYTES = 64 * 1024
+BYTES_PER_MB = 1024 * 1024
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -93,6 +99,26 @@ async def list_voices() -> dict[str, Any]:
     return {"voices": tts_engine.get_available_voices()}
 
 
+async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
+    """Lee la subida por bloques y aborta con 413 en cuanto se excede el límite (evita agotar la RAM)."""
+    chunks: list[bytes] = []
+    received = 0
+    while chunk := await file.read(UPLOAD_CHUNK_SIZE_BYTES):
+        received += len(chunk)
+        if received > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"El archivo supera el tamaño máximo permitido de {settings.MAX_PDF_SIZE_MB} MB.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@exception_to_http(status_code=422, detail="No se pudo procesar el PDF")
+async def _parse_pdf_in_threadpool(service: PdfProcessingService, pdf_bytes: bytes, filename: str) -> dict[str, Any]:
+    return await run_in_threadpool(service.parse, pdf_bytes=pdf_bytes, filename=filename)
+
+
 @app.post("/api/pdf/parse")
 async def parse_pdf(
     request: Request,
@@ -105,11 +131,8 @@ async def parse_pdf(
 ) -> dict[str, Any]:
     rate_limiter.check(request, bucket="parse", max_requests=settings.RATE_LIMIT_PARSE_PER_MIN)
 
-    filename = file.filename or "documento.pdf"
-    if not filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="El archivo debe ser un documento PDF (.pdf).")
-
-    pdf_bytes = await file.read()
+    filename = sanitize_and_validate_filename(file.filename or "")
+    pdf_bytes = await _read_upload_with_limit(file, max_bytes=settings.MAX_PDF_SIZE_MB * BYTES_PER_MB)
     validate_pdf_bytes(pdf_bytes, max_size_mb=settings.MAX_PDF_SIZE_MB, max_pages=settings.MAX_PDF_PAGES)
 
     options = CleaningOptions(
@@ -119,12 +142,7 @@ async def parse_pdf(
         split_by_commas=split_by_commas,
         remove_academic_citations=remove_academic_citations,
     )
-    cleaner = SmartPDFCleaner(options=options)
-    try:
-        parsed = await run_in_threadpool(cleaner.parse_document, pdf_bytes=pdf_bytes, filename=filename)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"No se pudo procesar el PDF: {exc}") from exc
-
+    parsed = await _parse_pdf_in_threadpool(PdfProcessingService(options=options), pdf_bytes, filename)
     DOCUMENT_STORE[parsed["doc_id"]] = parsed
     return parsed
 
@@ -157,7 +175,6 @@ async def create_pdf_from_text(request: Request, payload: CreatePdfRequest) -> d
 
     DOCUMENT_STORE[parsed["doc_id"]] = parsed
 
-    import base64
     return {
         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
         "filename": safe_filename,
