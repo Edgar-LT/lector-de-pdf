@@ -90,8 +90,12 @@ def test_hostile_chapter_title_is_rendered_as_text_in_real_browser(
         except sync_api.Error as exc:
             pytest.skip(f"Microsoft Edge no disponible para Playwright: {exc}")
 
+        dialogs: list[str] = []
+        page_errors: list[str] = []
         try:
             page = browser.new_page()
+            page.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
+            page.on("pageerror", lambda err: page_errors.append(str(err)))
             page.goto(live_server_url)
             page.set_input_files("#pdfFileInput", str(pdf_path))
             # El panel de capítulos puede estar colapsado: basta con que el nodo exista en el DOM.
@@ -105,6 +109,8 @@ def test_hostile_chapter_title_is_rendered_as_text_in_real_browser(
         finally:
             browser.close()
 
+    assert not dialogs, f"Se disparó un diálogo inesperado en el navegador: {dialogs}"
+    assert not page_errors, f"Errores de ejecución JS en la página: {page_errors}"
     assert rendered_title == HOSTILE_TITLE
     assert injected_images == 0
     assert payload_executed is False

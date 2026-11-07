@@ -1,4 +1,4 @@
-const CACHE_NAME = "voxpdf-studio-v4";
+const CACHE_NAME = "voxpdf-studio-v5";
 const STATIC_ASSETS = [
   "./",
   "./index.html",

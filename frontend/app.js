@@ -511,7 +511,7 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, 
   renderChaptersAndPages();
 
   // Si se está restaurando automáticamente desde IndexedDB, recuperar página y oración directamente
-  const savedProgress = getSavedProgressObject(parsed.doc_id);
+  const savedProgress = window.VoxStorage.getProgress(parsed.doc_id);
   if (autoRestore && savedProgress) {
     if (savedProgress.speed) {
       state.playbackSpeed = parseFloat(savedProgress.speed) || 1.0;
