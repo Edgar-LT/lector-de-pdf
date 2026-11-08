@@ -81,21 +81,23 @@ class SpeakRequest(BaseModel):
 @app.get("/api/health")
 async def health_check(engine: NeuralTTSEngine = Depends(get_tts_engine)) -> dict[str, Any]:
     try:
-        mp3_files = list(engine.cache_dir.glob("*.mp3")) if engine.cache_dir.exists() else []
-        cache_bytes = sum(f.stat().st_size for f in mp3_files)
+        engine._ensure_index()
+        cached_count = len(engine._index)
+        cache_bytes = sum(size for _, size in engine._index.values())
         status = "ok"
-    except OSError:
-        mp3_files = []
+    except Exception:
+        cached_count = 0
         cache_bytes = 0
         status = "degraded"
     return {
         "status": status,
-        "version": "1.3.0",
+        "version": "1.3.1",
         "engine": "edge-tts + PyMuPDF",
+        "circuit_breaker_open": engine.is_circuit_open,
         "max_pdf_size_mb": settings.MAX_PDF_SIZE_MB,
         "max_pdf_pages": settings.MAX_PDF_PAGES,
         "cache_stats": {
-            "cached_mp3_files": len(mp3_files),
+            "cached_mp3_files": cached_count,
             "cache_size_mb": round(cache_bytes / (1024 * 1024), 2),
         },
     }
@@ -219,10 +221,12 @@ async def speak_sentence(
         logger.exception("Fallo inesperado en /api/tts/speak")
         raise HTTPException(status_code=502, detail="Error al sintetizar el audio.") from exc
 
+    file_size = audio_path.stat().st_size
     return FileResponse(
         path=str(audio_path),
         media_type="audio/mpeg",
         filename="fragmento.mp3",
+        headers={"Content-Length": str(file_size)},
     )
 
 
