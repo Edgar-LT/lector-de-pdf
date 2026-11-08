@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from pathlib import PurePosixPath
 
@@ -45,6 +45,9 @@ DANGEROUS_PDF_TOKENS_STR: list[tuple[str, str]] = [
 
 # Límite máximo de objetos XREF a inspeccionar descomprimidos para acotar el tiempo de validación
 MAX_XREF_SCAN = 2000
+
+# Límite de seguridad acumulado de descompresión (30 MB) para prevenir ataques de Decompression Bomb
+MAX_DECOMPRESSED_SCAN_BYTES = 30 * 1024 * 1024
 
 # Clave de bucket para clientes sin IP identificable (no debe compartirse con 127.0.0.1)
 UNKNOWN_CLIENT_KEY = "unknown"
@@ -90,17 +93,16 @@ def sanitize_and_validate_filename(filename: str) -> str:
 
 
 class SlidingWindowRateLimiter:
-    """Limitador de peticiones en memoria acotado (Bounded LRU) y seguro para concurrencia (thread-safe).
+    """Limitador de peticiones en memoria estrictamente acotado (Bounded LRU O(1)) y thread-safe.
 
-    Previene fugas de memoria (MLE) y condiciones de carrera bajo alta carga y rotación masiva de IPs.
+    Utiliza OrderedDict para desalojo determinista en O(1) de claves antiguas (evitando escaneos lineales).
     """
 
     def __init__(self, window_seconds: int = 60, max_tracked_keys: int = 50_000):
         self.window_seconds = window_seconds
         self.max_tracked_keys = max_tracked_keys
-        self._hits: dict[str, deque[float]] = {}
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = threading.Lock()
-        self._cleanup_counter = 0
 
     def reset(self) -> None:
         with self._lock:
@@ -125,22 +127,16 @@ class SlidingWindowRateLimiter:
         cutoff = now - self.window_seconds
 
         with self._lock:
-            self._cleanup_counter += 1
-            # Purga periódica amortizada de claves inactivas para mantener heap O(K)
-            if self._cleanup_counter % 200 == 0 or len(self._hits) >= self.max_tracked_keys:
-                stale_keys = [k for k, q in self._hits.items() if not q or q[-1] < cutoff]
-                for k in stale_keys:
-                    del self._hits[k]
-
-                # Si aún excede el límite máximo por ataque de inundación, expulsar la más antigua
-                while len(self._hits) >= self.max_tracked_keys:
-                    oldest_k = next(iter(self._hits))
-                    del self._hits[oldest_k]
-
-            if key not in self._hits:
-                self._hits[key] = deque()
-
-            q = self._hits[key]
+            # Reordenar acceso en O(1) llevándolo a la posición más reciente
+            if key in self._hits:
+                self._hits.move_to_end(key)
+                q = self._hits[key]
+            else:
+                # Evicción preventiva O(1) del cliente más inactivo (cabeza de OrderedDict)
+                if len(self._hits) >= self.max_tracked_keys:
+                    self._hits.popitem(last=False)
+                q = deque()
+                self._hits[key] = q
 
             while q and q[0] < cutoff:
                 q.popleft()
@@ -173,28 +169,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 def _contains_dangerous_action(doc: fitz.Document) -> str | None:
-    """Inspecciona el catálogo de objetos y diccionario de acciones del PDF sin límite ciego de XREF.
+    """Inspecciona el catálogo de objetos y diccionario de acciones del PDF sin límite ciego de XREF
 
-    Examina exhaustivamente la raíz del documento, catálogo de nombres y puntos de entrada de acciones (/Launch).
+    e inmune a ataques de descompresión masiva (Decompression Bomb).
     """
+    decompressed_bytes_accum = 0
+
     # 1. Comprobación focalizada de entradas de ejecución en el Catálogo (/Root)
     try:
         root_xref = doc.pdf_catalog()
         root_dict = doc.xref_object(root_xref, compressed=False)
+        decompressed_bytes_accum += len(root_dict)
         for token, reason in DANGEROUS_PDF_TOKENS_STR:
             if token in root_dict:
                 return reason
     except (RuntimeError, ValueError):
         pass
 
-    # 2. Búsqueda exhaustiva sin bypass: si el PDF tiene xrefs, iteramos con protección
+    # 2. Búsqueda exhaustiva sin bypass protegiendo el heap contra bombas de descompresión
     total_xrefs = doc.xref_length()
     for xref in range(1, total_xrefs):
         try:
-            # Inspección no comprimida de objetos relevantes
             body = doc.xref_object(xref, compressed=False)
         except (RuntimeError, ValueError):
             continue
+
+        decompressed_bytes_accum += len(body)
+        if decompressed_bytes_accum > MAX_DECOMPRESSED_SCAN_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail="Archivo bloqueado por seguridad: ratio de descompresión potencialmente malicioso (Decompression Bomb).",
+            )
+
         for token, reason in DANGEROUS_PDF_TOKENS_STR:
             if token in body:
                 return reason
