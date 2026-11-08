@@ -46,14 +46,27 @@ window.VoxClientParser = (function () {
     }
   }
 
+  function getLastWord(text) {
+    let i = text.length - 1;
+    while (i >= 0 && /\s/.test(text[i])) {
+      i--;
+    }
+    if (i < 0) return "";
+    const end = i + 1;
+    while (i >= 0 && !/\s/.test(text[i])) {
+      i--;
+    }
+    return text.slice(i + 1, end);
+  }
+
   function cleanPageText(lines, options) {
     let fullText = lines.join(" ");
     if (options.fixLineBreaks) {
       fullText = fullText.replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ]{2,})-\s+([a-záéíóúñ]{2,})/g, "$1$2");
-      fullText = fullText.replace(/(?<=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b) (?=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)/g, "");
+      fullText = fullText.replace(/\b([A-Za-zÁÉÍÓÚÑa-záéíóúñ])\s+(?=[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)/g, "$1");
       fullText = fullText.replace(/\s{2,}/g, " ");
     }
-    if (options.removeAcademicCitations) {
+    if (options.removeAcademicCitations && fullText.includes("[")) {
       fullText = fullText.replace(/\s*\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]/g, "");
     }
     return fullText.trim();
@@ -61,18 +74,49 @@ window.VoxClientParser = (function () {
 
   function splitTextIntoSentences(fullText, splitByCommas = true) {
     if (!fullText) return [];
-    const splitPattern = splitByCommas !== false ? /(?<=[.!?…])\s+|(?<!\d)(?<=[,;:])\s+/ : /(?<=[.!?…])\s+/;
-    const rawParts = fullText
-      .split(splitPattern)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    
+    // Autómata determinista O(N) sin regex lookbehind
+    const rawParts = [];
+    const n = fullText.length;
+    let start = 0;
+    let i = 0;
+
+    while (i < n) {
+      const ch = fullText[i];
+      const isTerminal = ch === "." || ch === "!" || ch === "?" || ch === "…";
+      const isComma = splitByCommas !== false && (ch === "," || ch === ";" || ch === ":");
+
+      if (isTerminal || isComma) {
+        if (i + 1 === n || /\s/.test(fullText[i + 1])) {
+          if (isComma && i > 0 && /\d/.test(fullText[i - 1])) {
+            i++;
+            continue;
+          }
+          const segment = fullText.slice(start, i + 1).trim();
+          if (segment) {
+            rawParts.push(segment);
+          }
+          i++;
+          while (i < n && /\s/.test(fullText[i])) {
+            i++;
+          }
+          start = i;
+          continue;
+        }
+      }
+      i++;
+    }
+
+    const remainder = fullText.slice(start, n).trim();
+    if (remainder) {
+      rawParts.push(remainder);
+    }
 
     const sentences = [];
     let clauseBuf = "";
     for (const piece of rawParts) {
       if (clauseBuf) {
-        const words = clauseBuf.split(/\s+/);
-        const lastWord = words[words.length - 1] || "";
+        const lastWord = getLastWord(clauseBuf);
         if (ABBR_REGEX.test(lastWord)) {
           clauseBuf += " " + piece;
           continue;

@@ -19,9 +19,18 @@ SENTENCE_SPLIT_REGEX = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÁÉÍÓÚÑÜ0-9«\"
 SPLIT_COMMAS_AND_PERIODS_REGEX = re.compile(r"(?<=[.!?…])\s+|(?<!\d)(?<=[,;:])\s+")
 
 ABBREVIATION_PATTERN = re.compile(
-    r"^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.$",
+    r"^(?:p[áa]g|p[áa]gs|cap|caps|art|arts|dr|dra|sr|sra|prof|ing|lic|ej|fig|figs|vs|no|n[úu]m)\.?$",
     re.IGNORECASE,
 )
+
+ABBREVIATIONS_SET = frozenset({
+    "pág.", "págs.", "pag.", "pags.", "cap.", "caps.", "art.", "arts.",
+    "dr.", "dra.", "sr.", "sra.", "prof.", "ing.", "lic.", "ej.",
+    "fig.", "figs.", "vs.", "no.", "núm.", "num.",
+    "pág", "págs", "pag", "pags", "cap", "caps", "art", "arts",
+    "dr", "dra", "sr", "sra", "prof", "ing", "lic", "ej",
+    "fig", "figs", "vs", "no", "núm", "num"
+})
 
 CITATION_BRACKET_REGEX = re.compile(r"\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]")
 
@@ -120,8 +129,21 @@ class SmartPDFCleaner:
         min_repeats = 2 if len(raw_pages_blocks) <= 4 else max(2, int(len(raw_pages_blocks) * 0.4))
         return {sig for sig, count in signature_counter.items() if count >= min_repeats}
 
+    @staticmethod
+    def get_last_word(text: str) -> str:
+        """Extrae la última palabra de un texto en O(K) sin particionar la cadena completa."""
+        i = len(text) - 1
+        while i >= 0 and text[i].isspace():
+            i -= 1
+        if i < 0:
+            return ""
+        end = i + 1
+        while i >= 0 and not text[i].isspace():
+            i -= 1
+        return text[i + 1:end]
+
     def clean_paragraph_text(self, text: str) -> str:
-        """Limpia un bloque de texto reparando guiones de fin de línea y saltos cortados."""
+        """Limpia un bloque de texto reparando guiones de fin de línea y saltos cortados sin ReDoS."""
         cleaned = text.strip()
         if not cleaned:
             return ""
@@ -134,25 +156,61 @@ class SmartPDFCleaner:
             )
             cleaned = re.sub(r"\s*\n+\s*", " ", cleaned)
 
+        # Reemplazo de iniciales aisladas con espaciado sin lookbehind vulnerable a ReDoS
         cleaned = re.sub(
-            r"(?<=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b) (?=\b[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)", "", cleaned
+            r"\b([A-Za-zÁÉÍÓÚÑa-záéíóúñ])\s+(?=[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)", r"\1", cleaned
         )
 
-        if self.options.remove_academic_citations:
+        if self.options.remove_academic_citations and "[" in cleaned:
             cleaned = re.sub(r"\s*\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]", "", cleaned)
 
         cleaned = re.sub(r"[ \t\r\f\v]+", " ", cleaned)
         cleaned = re.sub(r"^\s*[•●▪▸►]\s*", "", cleaned)
-        return re.sub(r"[ \t\r\f\v]+", " ", cleaned).strip()
+        return cleaned.strip()
 
     @classmethod
     def split_into_sentences(cls, paragraph: str, split_by_commas: bool = True) -> list[str]:
+        """Tokenizador determinista de complejidad O(N) que segmenta en oraciones y cláusulas
+
+        sin romper números (ej. 1, 500 o 3.1416) ni incurrir en costos cuadráticos.
+        """
         if not paragraph:
             return []
 
-        splitter = SPLIT_COMMAS_AND_PERIODS_REGEX if split_by_commas else SENTENCE_SPLIT_REGEX
-        raw = [p.strip() for p in splitter.split(paragraph) if p.strip()]
-        merged = cls._merge_abbreviation_fragments(raw)
+        tokens: list[str] = []
+        n = len(paragraph)
+        start = 0
+        i = 0
+
+        while i < n:
+            ch = paragraph[i]
+            is_terminal = ch in ".!?…"
+            is_comma_split = split_by_commas and (ch in ",;:")
+
+            if is_terminal or is_comma_split:
+                # Si el signo está seguido por espacio o fin de texto
+                if (i + 1 == n) or paragraph[i + 1].isspace():
+                    # Salvaguarda: No romper en dígitos contiguos o separados (ej: '1, 500')
+                    if is_comma_split and i > 0 and paragraph[i - 1].isdigit():
+                        i += 1
+                        continue
+
+                    segment = paragraph[start:i + 1].strip()
+                    if segment:
+                        tokens.append(segment)
+
+                    i += 1
+                    while i < n and paragraph[i].isspace():
+                        i += 1
+                    start = i
+                    continue
+            i += 1
+
+        remainder = paragraph[start:n].strip()
+        if remainder:
+            tokens.append(remainder)
+
+        merged = cls._merge_abbreviation_fragments(tokens)
 
         sentences: list[str] = []
         for s in merged:
@@ -163,19 +221,18 @@ class SmartPDFCleaner:
                 sentences.append(s)
         return sentences
 
-    @staticmethod
-    def _merge_abbreviation_fragments(raw_parts: list[str]) -> list[str]:
-        """Une fragmentos separados erróneamente tras abreviaturas (ej. 'pág. 15', 'Dr. Pérez')."""
+    @classmethod
+    def _merge_abbreviation_fragments(cls, raw_parts: list[str]) -> list[str]:
+        """Une fragmentos separados erróneamente tras abreviaturas en O(M) estricto."""
         merged: list[str] = []
         buf = ""
         for piece in raw_parts:
             if not buf:
                 buf = piece
                 continue
-            words = buf.split()
-            last_word = words[-1] if words else ""
-            if ABBREVIATION_PATTERN.match(last_word):
-                buf += " " + piece
+            last_word = cls.get_last_word(buf).lower()
+            if last_word in ABBREVIATIONS_SET or ABBREVIATION_PATTERN.match(last_word):
+                buf = f"{buf} {piece}"
                 continue
             merged.append(buf)
             buf = piece
@@ -254,11 +311,13 @@ class SmartPDFCleaner:
             if not sentences:
                 continue
 
+            safe_w = page_data.width if page_data.width > 0.0 else 1.0
+            safe_h = page_data.height if page_data.height > 0.0 else 1.0
             norm_bbox = [
-                round(bbox[0] / page_data.width, 4),
-                round(bbox[1] / page_data.height, 4),
-                round(bbox[2] / page_data.width, 4),
-                round(bbox[3] / page_data.height, 4),
+                round(bbox[0] / safe_w, 4),
+                round(bbox[1] / safe_h, 4),
+                round(bbox[2] / safe_w, 4),
+                round(bbox[3] / safe_h, 4),
             ]
             page_paragraphs.append(cleaned_para)
             for s_text in sentences:
@@ -466,8 +525,11 @@ class SmartPDFCleaner:
                     rect = fitz.Rect(margin_x, y_cursor, page_width - margin_x, page_height - margin_bottom)
                     current_page.insert_textbox(rect, p_text, fontsize=font_size, fontname="helv", color=text_color)
 
-                approx_lines = max(1, len(p_text) // 75 + 1)
-                y_cursor += approx_lines * (font_size * 1.35) + (10 if is_heading else 6)
+                # Cálculo métrico exacto de líneas basado en el ancho útil de la página
+                usable_width = max(50.0, page_width - (margin_x * 2))
+                text_len_pts = fitz.get_text_length(p_text, fontname="helv", fontsize=font_size)
+                est_lines = max(1, int(text_len_pts // usable_width) + 1)
+                y_cursor += est_lines * (font_size * 1.35) + (10 if is_heading else 6)
                 if y_cursor > page_height - margin_bottom - 36:
                     cls._stamp_page_footer_number(current_page, page_num, page_width, page_height)
                     current_page = doc.new_page(width=page_width, height=page_height)
