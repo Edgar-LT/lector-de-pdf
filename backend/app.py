@@ -81,9 +81,7 @@ class SpeakRequest(BaseModel):
 @app.get("/api/health")
 async def health_check(engine: NeuralTTSEngine = Depends(get_tts_engine)) -> dict[str, Any]:
     try:
-        engine._ensure_index()
-        cached_count = len(engine._index)
-        cache_bytes = sum(size for _, size in engine._index.values())
+        cached_count, cache_bytes = engine._lru_cache.get_stats()
         status = "ok"
     except Exception:
         cached_count = 0

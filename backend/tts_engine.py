@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Protocol
 
@@ -95,6 +97,74 @@ NEURAL_VOICES: list[dict[str, str]] = [
 ]
 
 
+class ThreadSafeLruCache:
+    """Caché LRU en memoria estrictamente thread-safe con operaciones O(1) vía OrderedDict."""
+
+    def __init__(self, cache_dir: Path):
+        self.cache_dir = cache_dir
+        self._entries: OrderedDict[str, tuple[float, int]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._initialized = False
+
+    def ensure_initialized(self) -> None:
+        with self._lock:
+            if self._initialized or not self.cache_dir.exists():
+                return
+            try:
+                now = time.time()
+                for p in self.cache_dir.glob("*.mp3"):
+                    st = p.stat()
+                    self._entries[p.name] = (st.st_mtime or now, st.st_size)
+                self._initialized = True
+            except OSError:
+                pass
+
+    def record_access_or_insert(self, filename: str, size: int) -> None:
+        """Inserta o actualiza un archivo llevándolo al extremo más reciente en O(1)."""
+        now = time.time()
+        with self._lock:
+            if filename in self._entries:
+                self._entries.move_to_end(filename)
+            self._entries[filename] = (now, size)
+
+    def get_stats(self) -> tuple[int, int]:
+        """Devuelve (total_archivos, total_bytes) de forma thread-safe."""
+        self.ensure_initialized()
+        with self._lock:
+            count = len(self._entries)
+            total_bytes = sum(size for _, size in self._entries.values())
+            return count, total_bytes
+
+    def prune_lru(self, max_files: int, max_size_mb: int) -> int:
+        """Extrae en O(1) amortizado los archivos a eliminar para respetar cuotas."""
+        if (max_files <= 0 and max_size_mb <= 0) or not self.cache_dir.exists():
+            return 0
+
+        self.ensure_initialized()
+        max_bytes = max_size_mb * 1024 * 1024 if max_size_mb > 0 else float("inf")
+        to_delete: list[str] = []
+
+        with self._lock:
+            total_bytes = sum(size for _, size in self._entries.values())
+            # Desalojo de los más antiguos (cabeza de OrderedDict)
+            while self._entries and (
+                (max_files > 0 and len(self._entries) > max_files) or (total_bytes > max_bytes)
+            ):
+                filename, (_, size) = self._entries.popitem(last=False)
+                total_bytes -= size
+                to_delete.append(filename)
+
+        removed = 0
+        for fname in to_delete:
+            p = self.cache_dir / fname
+            try:
+                p.unlink(missing_ok=True)
+                removed += 1
+            except OSError as exc:
+                logger.debug("No se pudo eliminar archivo de caché %s: %s", p, exc)
+        return removed
+
+
 class NeuralTTSEngine:
     """Motor de síntesis de voz neuronal con caché en disco, proveedor inyectable y Circuit Breaker."""
 
@@ -106,10 +176,7 @@ class NeuralTTSEngine:
         self._provider: TtsProvider = provider or EdgeTtsProvider()
         self._consecutive_failures: int = 0
         self._circuit_open_until: float = 0.0
-        self._prune_call_counter: int = 0
-        # Índice en memoria O(1) de archivos en caché: digest -> (last_access_time, size_bytes)
-        self._index: dict[str, tuple[float, int]] = {}
-        self._index_initialized: bool = False
+        self._lru_cache = ThreadSafeLruCache(self.cache_dir)
         self._pruning_task: asyncio.Task | None = None
 
     @property
@@ -145,65 +212,16 @@ class NeuralTTSEngine:
         digest = hashlib.sha256(key).hexdigest()[:24]
         return self.cache_dir / f"{digest}.mp3"
 
-    def maybe_prune_cache(
-        self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB, interval: int = 25
-    ) -> int:
-        """Invoca la purga LRU de manera throttled (cada N llamadas) para proteger el I/O del disco bajo alta concurrencia."""
-        self._prune_call_counter += 1
-        if self._prune_call_counter % interval == 0:
-            return self.prune_cache(max_files=max_files, max_size_mb=max_size_mb)
-        return 0
-
-    def _ensure_index(self) -> None:
-        """Carga el índice en memoria una única vez de manera no bloqueante."""
-        if self._index_initialized or not self.cache_dir.exists():
-            return
-        try:
-            now = time.time()
-            for p in self.cache_dir.glob("*.mp3"):
-                st = p.stat()
-                self._index[p.name] = (st.st_mtime or now, st.st_size)
-            self._index_initialized = True
-        except OSError:
-            pass
-
     def prune_cache_async(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB) -> None:
         """Dispara la purga de caché como corrutina en segundo plano sin congelar la respuesta del endpoint."""
         if self._pruning_task and not self._pruning_task.done():
             return
         self._pruning_task = asyncio.create_task(
-            asyncio.to_thread(self.prune_cache, max_files=max_files, max_size_mb=max_size_mb)
+            asyncio.to_thread(self._lru_cache.prune_lru, max_files, max_size_mb)
         )
 
     def prune_cache(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB) -> int:
-        """Elimina los archivos MP3 más antiguos guiándose por el índice en memoria O(1)."""
-        if (max_files <= 0 and max_size_mb <= 0) or not self.cache_dir.exists():
-            return 0
-
-        self._ensure_index()
-        # Ordenamiento sobre el índice en RAM sin invocar stat() síncrono al disco
-        sorted_entries = sorted(
-            self._index.items(),
-            key=lambda item: item[1][0],  # mtime
-            reverse=True,
-        )
-
-        max_bytes = max_size_mb * 1024 * 1024 if max_size_mb > 0 else float("inf")
-        total_bytes = 0
-        removed = 0
-
-        for idx, (filename, (_, size)) in enumerate(sorted_entries):
-            target_path = self.cache_dir / filename
-            if (max_files > 0 and idx >= max_files) or (total_bytes + size > max_bytes):
-                try:
-                    target_path.unlink(missing_ok=True)
-                    self._index.pop(filename, None)
-                    removed += 1
-                except OSError as exc:
-                    logger.debug("No se pudo eliminar archivo de caché %s: %s", target_path, exc)
-            else:
-                total_bytes += size
-        return removed
+        return self._lru_cache.prune_lru(max_files, max_size_mb)
 
     async def synthesize_to_file(
         self,
@@ -244,7 +262,7 @@ class NeuralTTSEngine:
                 if cache_path.exists() and cache_path.stat().st_size > MIN_CACHE_FILE_SIZE:
                     self.record_success()
                     file_size = cache_path.stat().st_size
-                    self._index[cache_path.name] = (time.time(), file_size)
+                    self._lru_cache.record_access_or_insert(cache_path.name, file_size)
                     self.prune_cache_async(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
                     return cache_path
             except Exception as exc:
