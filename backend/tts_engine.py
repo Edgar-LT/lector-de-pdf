@@ -107,6 +107,10 @@ class NeuralTTSEngine:
         self._consecutive_failures: int = 0
         self._circuit_open_until: float = 0.0
         self._prune_call_counter: int = 0
+        # Índice en memoria O(1) de archivos en caché: digest -> (last_access_time, size_bytes)
+        self._index: dict[str, tuple[float, int]] = {}
+        self._index_initialized: bool = False
+        self._pruning_task: asyncio.Task | None = None
 
     @property
     def is_circuit_open(self) -> bool:
@@ -150,29 +154,55 @@ class NeuralTTSEngine:
             return self.prune_cache(max_files=max_files, max_size_mb=max_size_mb)
         return 0
 
+    def _ensure_index(self) -> None:
+        """Carga el índice en memoria una única vez de manera no bloqueante."""
+        if self._index_initialized or not self.cache_dir.exists():
+            return
+        try:
+            now = time.time()
+            for p in self.cache_dir.glob("*.mp3"):
+                st = p.stat()
+                self._index[p.name] = (st.st_mtime or now, st.st_size)
+            self._index_initialized = True
+        except OSError:
+            pass
+
+    def prune_cache_async(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB) -> None:
+        """Dispara la purga de caché como corrutina en segundo plano sin congelar la respuesta del endpoint."""
+        if self._pruning_task and not self._pruning_task.done():
+            return
+        self._pruning_task = asyncio.create_task(
+            asyncio.to_thread(self.prune_cache, max_files=max_files, max_size_mb=max_size_mb)
+        )
+
     def prune_cache(self, max_files: int = DEFAULT_TTS_MAX_FILES, max_size_mb: int = DEFAULT_TTS_MAX_SIZE_MB) -> int:
-        """Elimina los archivos MP3 más antiguos cuando la caché supera max_files o max_size_mb (evicción LRU por cuota)."""
+        """Elimina los archivos MP3 más antiguos guiándose por el índice en memoria O(1)."""
         if (max_files <= 0 and max_size_mb <= 0) or not self.cache_dir.exists():
             return 0
-        mp3_files = sorted(
-            self.cache_dir.glob("*.mp3"),
-            key=lambda p: p.stat().st_mtime,
+
+        self._ensure_index()
+        # Ordenamiento sobre el índice en RAM sin invocar stat() síncrono al disco
+        sorted_entries = sorted(
+            self._index.items(),
+            key=lambda item: item[1][0],  # mtime
             reverse=True,
         )
+
         max_bytes = max_size_mb * 1024 * 1024 if max_size_mb > 0 else float("inf")
         total_bytes = 0
         removed = 0
 
-        for idx, old_file in enumerate(mp3_files):
-            try:
-                size = old_file.stat().st_size
-                if (max_files > 0 and idx >= max_files) or (total_bytes + size > max_bytes):
-                    old_file.unlink(missing_ok=True)
+        for idx, (filename, (_, size)) in enumerate(sorted_entries):
+            target_path = self.cache_dir / filename
+            if (max_files > 0 and idx >= max_files) or (total_bytes + size > max_bytes):
+                try:
+                    target_path.unlink(missing_ok=True)
+                    self._index.pop(filename, None)
                     removed += 1
-                else:
-                    total_bytes += size
-            except OSError as exc:
-                logger.debug("No se pudo inspeccionar/eliminar archivo de caché %s: %s", old_file, exc)
+                except OSError as exc:
+                    logger.debug("No se pudo eliminar archivo de caché %s: %s", target_path, exc)
+            else:
+                total_bytes += size
         return removed
 
     async def synthesize_to_file(
@@ -213,7 +243,9 @@ class NeuralTTSEngine:
                 )
                 if cache_path.exists() and cache_path.stat().st_size > MIN_CACHE_FILE_SIZE:
                     self.record_success()
-                    self.maybe_prune_cache(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
+                    file_size = cache_path.stat().st_size
+                    self._index[cache_path.name] = (time.time(), file_size)
+                    self.prune_cache_async(max_files=max_cache_files, max_size_mb=max_cache_size_mb)
                     return cache_path
             except Exception as exc:
                 last_exc = exc

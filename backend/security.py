@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Callable
 from pathlib import PurePosixPath
 
@@ -89,14 +90,21 @@ def sanitize_and_validate_filename(filename: str) -> str:
 
 
 class SlidingWindowRateLimiter:
-    """Limitador de peticiones en memoria por IP y categoría de endpoint (ventana de 60s)."""
+    """Limitador de peticiones en memoria acotado (Bounded LRU) y seguro para concurrencia (thread-safe).
 
-    def __init__(self, window_seconds: int = 60):
+    Previene fugas de memoria (MLE) y condiciones de carrera bajo alta carga y rotación masiva de IPs.
+    """
+
+    def __init__(self, window_seconds: int = 60, max_tracked_keys: int = 50_000):
         self.window_seconds = window_seconds
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self.max_tracked_keys = max_tracked_keys
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+        self._cleanup_counter = 0
 
     def reset(self) -> None:
-        self._hits.clear()
+        with self._lock:
+            self._hits.clear()
 
     @staticmethod
     def get_client_ip(request: Request) -> str:
@@ -114,20 +122,37 @@ class SlidingWindowRateLimiter:
         now = time.monotonic()
         ip = self.get_client_ip(request)
         key = f"{bucket}:{ip}"
-        q = self._hits[key]
-
         cutoff = now - self.window_seconds
-        while q and q[0] < cutoff:
-            q.popleft()
 
-        if len(q) >= max_requests:
-            retry_after = max(1, int(round(self.window_seconds - (now - q[0]))))
-            raise HTTPException(
-                status_code=429,
-                detail=f"Límite de uso excedido ({max_requests} solicitudes/min). Intenta de nuevo en {retry_after}s.",
-                headers={"Retry-After": str(retry_after)},
-            )
-        q.append(now)
+        with self._lock:
+            self._cleanup_counter += 1
+            # Purga periódica amortizada de claves inactivas para mantener heap O(K)
+            if self._cleanup_counter % 200 == 0 or len(self._hits) >= self.max_tracked_keys:
+                stale_keys = [k for k, q in self._hits.items() if not q or q[-1] < cutoff]
+                for k in stale_keys:
+                    del self._hits[k]
+
+                # Si aún excede el límite máximo por ataque de inundación, expulsar la más antigua
+                while len(self._hits) >= self.max_tracked_keys:
+                    oldest_k = next(iter(self._hits))
+                    del self._hits[oldest_k]
+
+            if key not in self._hits:
+                self._hits[key] = deque()
+
+            q = self._hits[key]
+
+            while q and q[0] < cutoff:
+                q.popleft()
+
+            if len(q) >= max_requests:
+                retry_after = max(1, int(round(self.window_seconds - (now - q[0]))))
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Límite de uso excedido ({max_requests} solicitudes/min). Intenta de nuevo en {retry_after}s.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            q.append(now)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -148,10 +173,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 def _contains_dangerous_action(doc: fitz.Document) -> str | None:
-    """Inspecciona los objetos XREF descomprimidos en busca de acciones peligrosas (ej. /Launch en ObjStm)."""
-    upper_xref = min(doc.xref_length(), MAX_XREF_SCAN)
-    for xref in range(1, upper_xref):
+    """Inspecciona el catálogo de objetos y diccionario de acciones del PDF sin límite ciego de XREF.
+
+    Examina exhaustivamente la raíz del documento, catálogo de nombres y puntos de entrada de acciones (/Launch).
+    """
+    # 1. Comprobación focalizada de entradas de ejecución en el Catálogo (/Root)
+    try:
+        root_xref = doc.pdf_catalog()
+        root_dict = doc.xref_object(root_xref, compressed=False)
+        for token, reason in DANGEROUS_PDF_TOKENS_STR:
+            if token in root_dict:
+                return reason
+    except (RuntimeError, ValueError):
+        pass
+
+    # 2. Búsqueda exhaustiva sin bypass: si el PDF tiene xrefs, iteramos con protección
+    total_xrefs = doc.xref_length()
+    for xref in range(1, total_xrefs):
         try:
+            # Inspección no comprimida de objetos relevantes
             body = doc.xref_object(xref, compressed=False)
         except (RuntimeError, ValueError):
             continue
