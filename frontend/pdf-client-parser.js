@@ -113,21 +113,24 @@ window.VoxClientParser = (function () {
     }
 
     const sentences = [];
-    let clauseBuf = "";
+    let currentChunk = [];
+
     for (const piece of rawParts) {
-      if (clauseBuf) {
-        const lastWord = getLastWord(clauseBuf);
-        if (ABBR_REGEX.test(lastWord)) {
-          clauseBuf += " " + piece;
-          continue;
-        }
-        sentences.push(clauseBuf);
-        clauseBuf = piece;
-      } else {
-        clauseBuf = piece;
+      if (currentChunk.length === 0) {
+        currentChunk.push(piece);
+        continue;
       }
+      const lastWord = getLastWord(currentChunk[currentChunk.length - 1]);
+      if (ABBR_REGEX.test(lastWord)) {
+        currentChunk.push(piece);
+        continue;
+      }
+      sentences.push(currentChunk.join(" "));
+      currentChunk = [piece];
     }
-    if (clauseBuf) sentences.push(clauseBuf);
+    if (currentChunk.length > 0) {
+      sentences.push(currentChunk.join(" "));
+    }
     return sentences;
   }
 

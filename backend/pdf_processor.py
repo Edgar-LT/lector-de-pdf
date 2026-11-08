@@ -156,9 +156,9 @@ class SmartPDFCleaner:
             )
             cleaned = re.sub(r"\s*\n+\s*", " ", cleaned)
 
-        # Reemplazo de iniciales aisladas con espaciado sin lookbehind vulnerable a ReDoS
+        # Reemplazo lineal determinista de iniciales aisladas con espaciado sin lookahead/lookbehind
         cleaned = re.sub(
-            r"\b([A-Za-zÁÉÍÓÚÑa-záéíóúñ])\s+(?=[A-Za-zÁÉÍÓÚÑa-záéíóúñ]\b)", r"\1", cleaned
+            r"\b([A-Za-zÁÉÍÓÚÑa-záéíóúñ])\s+([A-Za-zÁÉÍÓÚÑa-záéíóúñ])\b", r"\1\2", cleaned
         )
 
         if self.options.remove_academic_citations and "[" in cleaned:
@@ -223,21 +223,31 @@ class SmartPDFCleaner:
 
     @classmethod
     def _merge_abbreviation_fragments(cls, raw_parts: list[str]) -> list[str]:
-        """Une fragmentos separados erróneamente tras abreviaturas en O(M) estricto."""
+        """Une fragmentos separados erróneamente tras abreviaturas en O(M) estricto
+
+        utilizando buffers de lista para erradicar la sobrecarga cuadrática de memoria.
+        """
+        if not raw_parts:
+            return []
+
         merged: list[str] = []
-        buf = ""
+        current_chunk: list[str] = []
+
         for piece in raw_parts:
-            if not buf:
-                buf = piece
+            if not current_chunk:
+                current_chunk.append(piece)
                 continue
-            last_word = cls.get_last_word(buf).lower()
+
+            last_word = cls.get_last_word(current_chunk[-1]).lower()
             if last_word in ABBREVIATIONS_SET or ABBREVIATION_PATTERN.match(last_word):
-                buf = f"{buf} {piece}"
-                continue
-            merged.append(buf)
-            buf = piece
-        if buf:
-            merged.append(buf)
+                current_chunk.append(piece)
+            else:
+                merged.append(" ".join(current_chunk))
+                current_chunk = [piece]
+
+        if current_chunk:
+            merged.append(" ".join(current_chunk))
+
         return merged
 
     @staticmethod
