@@ -428,6 +428,12 @@ async function handleUploadFile(file, keepPosition = false) {
   state.audioBlobCache.clear();
 
   dom.nowPlayingSentence.textContent = "Procesando documento PDF...";
+  dom.sentencesContainer.innerHTML = `
+    <div class="p-6 rounded-lg bg-bg-base/60 border border-white/[0.05] text-center flex flex-col items-center justify-center gap-2 text-slate-300">
+      <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-xs font-medium">Actualizando vista y procesando PDF...</p>
+    </div>
+  `;
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -527,7 +533,7 @@ async function initializeDocument(parsed, pdfArrayBuffer, keepPosition = false, 
 
   const targetPage = keepPosition ? Math.min(state.currentPage, parsed.total_pages) : 1;
   const targetSentence = keepPosition ? state.currentSentenceIdx : 0;
-  await goToPage(targetPage, targetSentence, false);
+  await goToPage(targetPage, targetSentence, false, true);
 
   if (!keepPosition) {
     checkSavedProgress(parsed.doc_id);
@@ -728,14 +734,14 @@ function updateSleepTimerDisplay() {
 /**
  * Cambia de página y sincroniza capítulo y audio preservando la posición de scroll de la ventana.
  */
-async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false) {
+async function goToPage(pageNumber, sentenceIndex = 0, autoPlay = false, forceRerender = false) {
   if (!state.docData) return;
   const savedWindowScrollY = window.scrollY;
   const total = state.docData.total_pages;
   const clampedPage = Math.max(1, Math.min(total, pageNumber));
 
   const prevChapter = findChapterForPage(state.currentPage);
-  const pageChanged = state.currentPage !== clampedPage || dom.sentencesContainer.children.length === 0;
+  const pageChanged = forceRerender || state.currentPage !== clampedPage || dom.sentencesContainer.children.length === 0;
   state.currentPage = clampedPage;
 
   const newChapter = findChapterForPage(clampedPage);
